@@ -1,0 +1,17 @@
+[package]
+name = "op-interop-contender"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# contender_core = { git = "https://github.com/flashbots/contender", branch = "feat/op-interop-support" }
+# contender_sqlite = { git = "https://github.com/flashbots/contender", branch = "feat/op-interop-support" }
+# contender_testfile = { git = "https://github.com/flashbots/contender", branch = "feat/op-interop-support" }
+
+contender_core.path = "../contender/crates/core"
+contender_sqlite.path = "../contender/crates/sqlite_db"
+contender_testfile.path = "../contender/crates/testfile"
+
+tokio = { version = "1.40.0", features = ['rt-multi-thread'] }
+tracing = { version = "0.1.41", features = ["log"] }
+tracing-subscriber = "0.3.19"
