@@ -1,4 +1,6 @@
+mod contracts;
 mod file_seed;
+mod scenarios;
 mod spam_callback;
 
 use std::{str::FromStr, sync::Arc, time::Duration};
@@ -8,7 +10,6 @@ use contender_core::{
     agent_controller::AgentStore,
     alloy_primitives::utils::parse_units,
     db::DbOps,
-    generator::types::{CreateDefinition, FunctionCallDefinition, SpamRequest},
     spammer::{Spammer, TimedSpammer},
     test_scenario::{PrometheusCollector, TestScenario, TestScenarioParams},
 };
@@ -16,7 +17,6 @@ use contender_sqlite::SqliteDb;
 use contender_testfile::TestConfig;
 use file_seed::Seedfile;
 use spam_callback::OpInteropCallback;
-use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -30,31 +30,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
     )
     .unwrap();
-    let source_url = Url::from_str("http://localhost:8545").unwrap();
-    let destination_url = Url::from_str("http://localhost:8546").unwrap();
+    let source_url = Url::from_str("http://localhost:9545").unwrap();
+    let destination_url = Url::from_str("http://localhost:9546").unwrap();
 
     let spammer = TimedSpammer::new(Duration::from_millis(500));
-    let config = TestConfig {
-        env: None,
-        create: Some(vec![CreateDefinition {
-            bytecode: include_str!("./contracts/SpamMe.hex").to_string(),
-            name: "test_contract".to_string(),
-            from: None,
-            from_pool: Some("admin".to_string()),
-        }]),
-        setup: None,
-        spam: Some(vec![SpamRequest::Tx(FunctionCallDefinition {
-            to: "{test_contract}".to_string(),
-            from: None,
-            from_pool: Some("spammers".to_string()),
-            signature: "consumeGas()".to_string(),
-            args: None,
-            gas_limit: Some(120000),
-            value: None,
-            fuzz: None,
-            kind: None,
-        })]),
-    };
+
     let mut agents = AgentStore::new();
     let agent_defs = [("admin", 1), ("spammers", 10)];
     for (name, count) in agent_defs {
@@ -71,6 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bundle_type: Default::default(),
     };
 
+    let config = TestConfig::from_file("src/scenarios/l2MintAndSend.toml").unwrap();
+
     let mut scenario = TestScenario::new(
         config,
         db.clone(),
@@ -80,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         PrometheusCollector::default(),
     )
     .await?;
-    let callback = OpInteropCallback::new(destination_url.clone());
+    let callback = OpInteropCallback::new(&source_url, &destination_url);
 
     for (agent, _signer) in agent_defs {
         scenario
@@ -93,14 +75,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     scenario.deploy_contracts().await?;
-
-    let contract = db.get_named_tx("test_contract", source_url.as_str())?;
-    if let Some(contract) = contract {
-        info!("Contract deployed: {:?}", contract);
-    } else {
-        warn!("Contract failed to deploy...");
-    }
-
     scenario.run_setup().await?;
 
     spammer
