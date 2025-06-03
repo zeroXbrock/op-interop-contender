@@ -1,5 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
-
+use crate::contracts::SUPERCHAIN_TOKEN_BRIDGE;
+use crate::op_relay::{SupersimAdminProvider, XCHAIN_LOG_TOPIC, relay_message};
+use alloy::network::{AnyTransactionReceipt, EthereumWallet};
+use alloy::rpc::types::Log;
+use contender_core::PrivateKeySigner;
 use contender_core::{
     Url,
     alloy_primitives::Address,
@@ -10,36 +13,59 @@ use contender_core::{
     spammer::{OnBatchSent, OnTxSent, tx_actor::TxActorHandle},
     tokio_task::{self},
 };
-
-use crate::contracts::SUPERCHAIN_TOKEN_BRIDGE;
+use std::str::FromStr;
+use std::{collections::HashMap, sync::Arc};
 
 pub struct OpInteropCallback {
     destination_provider: Arc<AnyProvider>,
     source_provider: Arc<AnyProvider>,
+    op_admin_provider: Arc<SupersimAdminProvider>,
+    source_chain_id: u64,
 }
 
 impl OpInteropCallback {
-    pub fn new(source_rpc_url: &Url, destination_rpc_url: &Url) -> Self {
+    pub async fn new(
+        source_rpc_url: &Url,
+        destination_rpc_url: &Url,
+        admin_url: &Url,
+        admin_signer: Option<&PrivateKeySigner>,
+    ) -> Self {
         let source_provider = DynProvider::new(
             ProviderBuilder::new()
                 .network::<AnyNetwork>()
                 .connect_http(source_rpc_url.to_owned()),
         );
+        let source_chain_id = source_provider
+            .get_chain_id()
+            .await
+            .expect("Failed to get source chain ID");
+        let destination_wallet = if let Some(signer) = admin_signer {
+            EthereumWallet::from(signer.to_owned())
+        } else {
+            PrivateKeySigner::from_str(
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            )
+            .unwrap()
+            .into()
+        };
         let destination_provider = DynProvider::new(
             ProviderBuilder::new()
                 .network::<AnyNetwork>()
+                .wallet(destination_wallet)
                 .connect_http(destination_rpc_url.to_owned()),
         );
+        let op_admin_provider = SupersimAdminProvider::new(admin_url.to_owned());
         Self {
             destination_provider: Arc::new(destination_provider),
             source_provider: Arc::new(source_provider),
+            op_admin_provider: Arc::new(op_admin_provider),
+            source_chain_id,
         }
     }
 }
 
 impl OnBatchSent for OpInteropCallback {
     fn on_batch_sent(&self) -> Option<tokio_task::JoinHandle<Result<(), String>>> {
-        println!("Tx batch sent to L1.");
         None
     }
 }
@@ -53,64 +79,92 @@ impl OnTxSent for OpInteropCallback {
         _tx_handler: Option<Arc<TxActorHandle>>,
     ) -> Option<tokio_task::JoinHandle<()>> {
         println!(
-            "Sending transaction {} to destination chain.",
+            "Relaying transaction {} to destination chain.",
             pending_tx.tx_hash()
         );
 
-        let xchain_log_topic = "0x382409ac69001e11931a28435afef442cbfd20d9891907e8fa373ba7d351f320";
-
         let dest_provider = self.destination_provider.clone();
         let source_provider = self.source_provider.clone();
-        let src_hash = pending_tx.tx_hash().to_owned();
+        let op_admin_provider = self.op_admin_provider.clone();
+        let source_chain_id = self.source_chain_id;
+        let tx_hash = pending_tx.tx_hash().to_owned();
+
         let handle = tokio_task::spawn(async move {
-            // get logs from receipt via source provider
-            let receipt;
-            loop {
-                let fresh_receipt = source_provider
-                    .get_transaction_receipt(src_hash)
-                    .await
-                    .unwrap_or_else(|e| {
-                        println!("Failed to get transaction receipt: {e}");
-                        None
-                    });
-                if fresh_receipt.is_some() {
-                    receipt = fresh_receipt;
-                    break;
-                } else {
-                    println!("Waiting for transaction receipt...");
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                }
+            /* TODO:
+             - move all this async code to a separate async function `handle_relay_message`
+             - return Result<(), Box<dyn StdError>> from that function and cleanup error handling
+            */
+
+            // wait for tx to land
+            let _ = source_provider
+                .watch_pending_transaction(PendingTransactionConfig::new(tx_hash))
+                .await
+                .expect("Failed to watch pending transaction")
+                .await
+                .expect("Failed to get pending transaction");
+
+            // get receipt for logs
+            let receipt = source_provider.get_transaction_receipt(tx_hash).await;
+            if let Err(e) = receipt {
+                println!("Failed to get transaction receipt: {e}");
+                return;
             }
-            let mut xchain_log = None;
             let receipt = receipt.expect("receipt");
-            if let Some(to) = receipt.inner.to {
-                if to == SUPERCHAIN_TOKEN_BRIDGE.parse::<Address>().unwrap() {
-                    let logs = receipt.inner.inner.logs();
-                    for log in logs {
-                        if let Some(topic) = log.topics().first() {
-                            if topic.to_string() == xchain_log_topic {
-                                println!("Found xchain log");
-                                xchain_log = Some(log);
-                                break;
-                            }
-                        }
-                    }
-                }
+
+            if receipt.is_none() {
+                println!("Transaction receipt not found.");
+                return;
             }
+            let receipt = receipt.expect("receipt");
+
+            let xchain_log = find_xchain_log(&receipt).await;
+            if let Err(e) = xchain_log {
+                println!("Encountered error while looking for xchain log: {e}");
+                return;
+            }
+            let xchain_log = xchain_log.expect("xchain log");
 
             if let Some(log) = xchain_log {
-                todo!("Process xchain log: {log:?}");
-                dest_provider
-                    // TODO: make relay transactions
-                    .send_transaction(Default::default())
+                let block = source_provider
+                    .get_block_by_hash(receipt.block_hash.expect("receipt block hash"))
                     .await
-                    .inspect_err(|e| {
-                        println!("Failed to send transaction: {e}");
-                    })
-                    .ok();
+                    .expect("block request")
+                    .expect("no block");
+                let res = relay_message(
+                    &log,
+                    block.header.timestamp,
+                    source_chain_id,
+                    dest_provider.as_ref(),
+                    op_admin_provider.as_ref(),
+                )
+                .await;
+                if let Err(e) = res {
+                    println!("Failed to relay message: {e}");
+                } else {
+                    println!("Message relayed successfully.");
+                }
             }
         });
 
         Some(handle)
     }
+}
+
+pub async fn find_xchain_log(
+    receipt: &AnyTransactionReceipt,
+) -> Result<Option<Log>, Box<dyn std::error::Error>> {
+    let mut xchain_log = None;
+    if let Some(to) = receipt.inner.to {
+        if to == SUPERCHAIN_TOKEN_BRIDGE.parse::<Address>().unwrap() {
+            let logs = receipt.inner.inner.logs();
+            for log in logs {
+                if let Some(topic) = log.topics().first() {
+                    if topic.to_string() == XCHAIN_LOG_TOPIC {
+                        xchain_log = Some(log.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    Ok(xchain_log)
 }

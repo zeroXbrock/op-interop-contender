@@ -1,5 +1,6 @@
 mod contracts;
 mod file_seed;
+mod op_relay;
 mod scenarios;
 mod spam_callback;
 
@@ -32,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .unwrap();
     let source_url = Url::from_str("http://localhost:9545").unwrap();
     let destination_url = Url::from_str("http://localhost:9546").unwrap();
+    let supersim_admin_url = Url::from_str("http://localhost:8420").unwrap();
 
     let spammer = TimedSpammer::new(Duration::from_millis(500));
 
@@ -62,7 +64,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         PrometheusCollector::default(),
     )
     .await?;
-    let callback = OpInteropCallback::new(&source_url, &destination_url);
+    let callback =
+        OpInteropCallback::new(&source_url, &destination_url, &supersim_admin_url, None).await;
 
     for (agent, _signer) in agent_defs {
         scenario
