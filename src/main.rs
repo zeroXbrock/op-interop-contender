@@ -10,7 +10,7 @@ use contender_core::{
         consensus::TxType,
         network::AnyNetwork,
         node_bindings::WEI_IN_ETHER,
-        primitives::U256,
+        primitives::{U256, utils::format_ether},
         providers::{DynProvider, Provider, ProviderBuilder},
         signers::local::PrivateKeySigner,
         transports::http::reqwest::Url,
@@ -25,6 +25,7 @@ use contender_testfile::TestConfig;
 use file_seed::Seedfile;
 use spam_callback::OpInteropCallback;
 use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::spam_callback::OP_ACTOR_NAME;
@@ -99,15 +100,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let test_signer = &agent.signers[0];
             let balance = source_client.get_balance(test_signer.address()).await?;
             if balance < WEI_IN_ETHER / U256::from(10) {
-                scenario
+                let pending_txs = scenario
                     .fund_agent_signers(agent_name, &sender.to_owned().into(), WEI_IN_ETHER)
                     .await?;
+                for tx in &pending_txs {
+                    // wait for the tx to be mined
+                    let mined_hash = source_client
+                        .watch_pending_transaction(tx.to_owned())
+                        .await?
+                        .await?;
+                    info!(
+                        "Funded {} with {} eth ({mined_hash})",
+                        test_signer.address(),
+                        format_ether(WEI_IN_ETHER)
+                    );
+                }
             }
         }
     }
 
-    let txs_per_batch = 250;
-    let duration = 10;
+    let read_var = |varname: &str, default: u64| {
+        std::env::var(varname)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or_else(|| {
+                warn!("{varname} not set, defaulting to {default}");
+                default
+            })
+    };
+
+    let txs_per_batch = read_var("SPAM_TXS_PER_BATCH", 25);
+    let duration = read_var("SPAM_DURATION", 5);
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
