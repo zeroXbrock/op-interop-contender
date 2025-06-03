@@ -1,7 +1,8 @@
-use std::sync::Arc;
-
+use crate::contracts::{
+    L2_TO_L2_CROSS_DOMAIN_MESSENGER, SUPERCHAIN_TOKEN_BRIDGE, XCHAIN_LOG_TOPIC,
+};
 use alloy::{
-    network::AnyNetwork,
+    network::{AnyNetwork, AnyTransactionReceipt},
     primitives::{Address, Bytes, U256},
     providers::{DynProvider, Provider, ProviderBuilder},
     rpc::types::{AccessList, Log, TransactionRequest},
@@ -10,10 +11,7 @@ use alloy::{
 };
 use contender_core::{Url, generator::types::AnyProvider};
 use serde::{Deserialize, Serialize};
-
-use crate::contracts::L2_TO_L2_CROSS_DOMAIN_MESSENGER;
-pub static XCHAIN_LOG_TOPIC: &str =
-    "0x382409ac69001e11931a28435afef442cbfd20d9891907e8fa373ba7d351f320";
+use std::sync::Arc;
 
 sol! {
     /// https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/interfaces/L2/ICrossL2Inbox.sol#L6-L12
@@ -131,7 +129,7 @@ pub async fn relay_message(
     .abi_encode();
 
     let tx_req = TransactionRequest::default()
-        .to(L2_TO_L2_CROSS_DOMAIN_MESSENGER.parse::<Address>().unwrap())
+        .to(*L2_TO_L2_CROSS_DOMAIN_MESSENGER)
         .input(calldata.into())
         .access_list(access_list.access_list);
 
@@ -143,4 +141,25 @@ pub async fn relay_message(
         })
         .ok();
     Ok(())
+}
+
+/// Finds cross-chain log in the transaction receipt if present.
+/// Returns `None` if xchain log not present.
+pub async fn find_xchain_log(
+    receipt: &AnyTransactionReceipt,
+) -> Result<Option<Log>, Box<dyn std::error::Error>> {
+    match receipt.inner.to {
+        Some(to) if to == *SUPERCHAIN_TOKEN_BRIDGE => {}
+        _ => return Ok(None),
+    };
+
+    let log = receipt
+        .inner
+        .inner
+        .logs()
+        .iter()
+        .find(|log| log.topics().first().map(|t| *t) == Some(*XCHAIN_LOG_TOPIC))
+        .cloned();
+
+    Ok(log)
 }

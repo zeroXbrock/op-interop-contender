@@ -1,12 +1,9 @@
-use crate::contracts::SUPERCHAIN_TOKEN_BRIDGE;
-use crate::op_relay::{SupersimAdminProvider, XCHAIN_LOG_TOPIC, relay_message};
-use alloy::network::{AnyTransactionReceipt, EthereumWallet};
+use crate::op_relay::{SupersimAdminProvider, find_xchain_log, relay_message};
+use alloy::network::EthereumWallet;
 use alloy::primitives::TxHash;
-use alloy::rpc::types::Log;
 use contender_core::PrivateKeySigner;
 use contender_core::{
     Url,
-    alloy_primitives::Address,
     alloy_providers::{
         DynProvider, PendingTransactionConfig, Provider, ProviderBuilder, network::AnyNetwork,
     },
@@ -16,6 +13,7 @@ use contender_core::{
 };
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
+use tracing::{info, warn};
 
 pub struct OpInteropCallback {
     destination_provider: Arc<AnyProvider>,
@@ -79,11 +77,6 @@ impl OnTxSent for OpInteropCallback {
         _extra: Option<HashMap<String, String>>,
         _tx_handler: Option<Arc<TxActorHandle>>,
     ) -> Option<tokio_task::JoinHandle<()>> {
-        println!(
-            "Relaying transaction {} to destination chain.",
-            pending_tx.tx_hash()
-        );
-
         let dest_provider = self.destination_provider.clone();
         let source_provider = self.source_provider.clone();
         let op_admin_provider = self.op_admin_provider.clone();
@@ -101,7 +94,7 @@ impl OnTxSent for OpInteropCallback {
             .await
             .map_err(|e| format!("Failed to handle on_tx_sent: {e}"))
             .unwrap_or_else(|e| {
-                eprintln!("Error: {e}");
+                warn!("Error: {e}");
             });
         });
 
@@ -109,6 +102,8 @@ impl OnTxSent for OpInteropCallback {
     }
 }
 
+/// Waits for transaction to land on source chain, then
+/// finds the xchain log in the receipt and relays it to the destination chain.
 pub async fn handle_on_tx_sent(
     source_provider: &AnyProvider,
     tx_hash: TxHash,
@@ -128,14 +123,14 @@ pub async fn handle_on_tx_sent(
         .await?
         .ok_or(format!("tx receipt for {tx_hash} not found"))?;
 
-    // find xchain log if present
+    // Find xchain log; if present, relay msg to destination chain.
     let xchain_log = find_xchain_log(&receipt).await?;
     if let Some(log) = xchain_log {
+        info!("Relaying message {tx_hash} to destination chain.");
         let block = source_provider
             .get_block_by_hash(receipt.block_hash.expect("receipt block hash"))
-            .await
-            .expect("block request")
-            .expect("no block");
+            .await?
+            .ok_or_else(|| format!("Block for receipt {tx_hash} not found"))?;
         relay_message(
             &log,
             block.header.timestamp,
@@ -146,23 +141,4 @@ pub async fn handle_on_tx_sent(
         .await?;
     }
     Ok(())
-}
-
-pub async fn find_xchain_log(
-    receipt: &AnyTransactionReceipt,
-) -> Result<Option<Log>, Box<dyn std::error::Error>> {
-    let mut xchain_log = None;
-    if let Some(to) = receipt.inner.to {
-        if to == SUPERCHAIN_TOKEN_BRIDGE.parse::<Address>().unwrap() {
-            let logs = receipt.inner.inner.logs();
-            for log in logs {
-                if let Some(topic) = log.topics().first() {
-                    if topic.to_string() == XCHAIN_LOG_TOPIC {
-                        xchain_log = Some(log.to_owned());
-                    }
-                }
-            }
-        }
-    }
-    Ok(xchain_log)
 }
