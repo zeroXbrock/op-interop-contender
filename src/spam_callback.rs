@@ -1,12 +1,12 @@
 use crate::op_relay::{SupersimAdminProvider, find_xchain_log, relay_message};
 use alloy::network::EthereumWallet;
 use alloy::primitives::TxHash;
-use contender_core::PrivateKeySigner;
+use alloy::providers::{
+    DynProvider, PendingTransactionConfig, Provider, ProviderBuilder, network::AnyNetwork,
+};
+use alloy::signers::local::PrivateKeySigner;
+use alloy::transports::http::reqwest::Url;
 use contender_core::{
-    Url,
-    alloy_providers::{
-        DynProvider, PendingTransactionConfig, Provider, ProviderBuilder, network::AnyNetwork,
-    },
     generator::{NamedTxRequest, types::AnyProvider},
     spammer::{OnBatchSent, OnTxSent, tx_actor::TxActorHandle},
     tokio_task::{self},

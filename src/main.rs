@@ -4,12 +4,10 @@ mod op_relay;
 mod scenarios;
 mod spam_callback;
 
-use std::{str::FromStr, sync::Arc, time::Duration};
-
+use alloy::{signers::local::PrivateKeySigner, transports::http::reqwest::Url};
 use contender_core::{
-    PrivateKeySigner, Url,
     agent_controller::AgentStore,
-    alloy_primitives::utils::parse_units,
+    alloy::primitives::utils::parse_units,
     db::DbOps,
     spammer::{Spammer, TimedSpammer},
     test_scenario::{PrometheusCollector, TestScenario, TestScenarioParams},
@@ -18,6 +16,7 @@ use contender_sqlite::SqliteDb;
 use contender_testfile::TestConfig;
 use file_seed::Seedfile;
 use spam_callback::OpInteropCallback;
+use std::{str::FromStr, sync::Arc, time::Duration};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -40,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut agents = AgentStore::new();
     let agent_defs = [("admin", 1), ("spammers", 10)];
     for (name, count) in agent_defs {
-        agents.add_new_agent(name, count, seedfile.seed());
+        agents.add_new_agent(name, count, &seedfile);
     }
 
     let scenario_params = TestScenarioParams {
@@ -48,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder_rpc_url: None,
         signers: vec![sender.to_owned()],
         agent_store: agents,
-        tx_type: contender_core::TxType::Eip1559,
+        tx_type: alloy::consensus::TxType::Eip1559,
         pending_tx_timeout_secs: 10,
         bundle_type: Default::default(),
     };
@@ -58,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut scenario = TestScenario::new(
         config,
         db.clone(),
-        seedfile.seed().to_owned(),
+        seedfile,
         scenario_params,
         None,
         PrometheusCollector::default(),

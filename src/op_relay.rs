@@ -8,8 +8,9 @@ use alloy::{
     rpc::types::{AccessList, Log, TransactionRequest},
     sol,
     sol_types::SolCall,
+    transports::http::reqwest::Url,
 };
-use contender_core::{Url, generator::types::AnyProvider};
+use contender_core::generator::types::AnyProvider;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
