@@ -12,6 +12,7 @@ use contender_core::{
     spammer::{Spammer, TimedSpammer},
     test_scenario::{PrometheusCollector, TestScenario, TestScenarioParams},
 };
+
 use contender_sqlite::SqliteDb;
 use contender_testfile::TestConfig;
 use file_seed::Seedfile;

@@ -6,13 +6,14 @@ use alloy::providers::{
 };
 use alloy::signers::local::PrivateKeySigner;
 use alloy::transports::http::reqwest::Url;
+use contender_core::spammer::RuntimeTxInfo;
 use contender_core::{
     generator::{NamedTxRequest, types::AnyProvider},
     spammer::{OnBatchSent, OnTxSent, tx_actor::TxActorHandle},
     tokio_task::{self},
 };
 use std::str::FromStr;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 pub struct OpInteropCallback {
@@ -74,7 +75,7 @@ impl OnTxSent for OpInteropCallback {
         &self,
         pending_tx: PendingTransactionConfig,
         _tx_req: &NamedTxRequest,
-        _extra: Option<HashMap<String, String>>,
+        _extra: RuntimeTxInfo,
         _tx_handler: Option<Arc<TxActorHandle>>,
     ) -> Option<tokio_task::JoinHandle<()>> {
         let dest_provider = self.destination_provider.clone();
