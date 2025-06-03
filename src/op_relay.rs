@@ -4,7 +4,7 @@ use crate::contracts::{
 use alloy::{
     network::{AnyNetwork, AnyTransactionReceipt},
     primitives::{Address, Bytes, U256},
-    providers::{DynProvider, Provider, ProviderBuilder},
+    providers::{DynProvider, PendingTransactionConfig, Provider, ProviderBuilder},
     rpc::types::{AccessList, Log, TransactionRequest},
     sol,
     sol_types::SolCall,
@@ -114,7 +114,7 @@ pub async fn relay_message(
     source_chain_id: u64,
     dest_provider: &AnyProvider,
     op_admin_provider: &SupersimAdminProvider,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Option<PendingTransactionConfig>, Box<dyn std::error::Error>> {
     let payload = build_payload(log);
 
     let id_req =
@@ -134,14 +134,14 @@ pub async fn relay_message(
         .input(calldata.into())
         .access_list(access_list.access_list);
 
-    dest_provider
+    let pending_tx = dest_provider
         .send_transaction(tx_req.into())
         .await
         .inspect_err(|e| {
             println!("Failed to send transaction: {e}");
         })
         .ok();
-    Ok(())
+    Ok(pending_tx.map(|tx| tx.inner().to_owned()))
 }
 
 /// Finds cross-chain log in the transaction receipt if present.

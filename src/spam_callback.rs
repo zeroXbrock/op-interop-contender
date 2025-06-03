@@ -7,14 +7,18 @@ use alloy::providers::{
 use alloy::signers::local::PrivateKeySigner;
 use alloy::transports::http::reqwest::Url;
 use contender_core::spammer::RuntimeTxInfo;
+use contender_core::spammer::tx_actor::CacheTx;
 use contender_core::{
     generator::{NamedTxRequest, types::AnyProvider},
     spammer::{OnBatchSent, OnTxSent, tx_actor::TxActorHandle},
     tokio_task::{self},
 };
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+pub static OP_ACTOR_NAME: &str = "op-dest";
 
 pub struct OpInteropCallback {
     destination_provider: Arc<AnyProvider>,
@@ -75,19 +79,19 @@ impl OnTxSent for OpInteropCallback {
         &self,
         pending_tx: PendingTransactionConfig,
         _tx_req: &NamedTxRequest,
-        _extra: RuntimeTxInfo,
-        _tx_handler: Option<Arc<TxActorHandle>>,
+        extra: RuntimeTxInfo,
+        tx_actors: Option<HashMap<String, Arc<TxActorHandle>>>,
     ) -> Option<tokio_task::JoinHandle<()>> {
         let dest_provider = self.destination_provider.clone();
         let source_provider = self.source_provider.clone();
         let op_admin_provider = self.op_admin_provider.clone();
         let source_chain_id = self.source_chain_id;
-        let tx_hash = pending_tx.tx_hash().to_owned();
+        let source_tx_hash = pending_tx.tx_hash().to_owned();
 
         let handle = tokio_task::spawn(async move {
-            handle_on_tx_sent(
+            let relay_tx_hash = handle_on_tx_sent(
                 &source_provider,
-                tx_hash,
+                source_tx_hash,
                 source_chain_id,
                 &dest_provider,
                 &op_admin_provider,
@@ -96,7 +100,24 @@ impl OnTxSent for OpInteropCallback {
             .map_err(|e| format!("Failed to handle on_tx_sent: {e}"))
             .unwrap_or_else(|e| {
                 warn!("Error: {e}");
+                None
             });
+            if let Some(relay_tx_hash) = relay_tx_hash {
+                info!("Message {source_tx_hash} relayed by tx {relay_tx_hash}");
+                let tx = CacheTx {
+                    tx_hash: relay_tx_hash,
+                    start_timestamp_ms: extra.start_timestamp_ms(),
+                    kind: extra.kind().cloned(),
+                    error: extra.error().cloned(),
+                };
+                if let Some(Some(actor)) =
+                    tx_actors.map(|actors| actors.get(OP_ACTOR_NAME).cloned())
+                {
+                    actor.cache_run_tx(tx).await.unwrap_or_else(|e| {
+                        warn!("Failed to cache transaction: {e}");
+                    });
+                }
+            }
         });
 
         Some(handle)
@@ -111,7 +132,7 @@ pub async fn handle_on_tx_sent(
     source_chain_id: u64,
     destination_provider: &AnyProvider,
     op_admin_provider: &SupersimAdminProvider,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Option<TxHash>, Box<dyn std::error::Error>> {
     // wait for tx to land
     let _ = source_provider
         .watch_pending_transaction(PendingTransactionConfig::new(tx_hash))
@@ -126,13 +147,14 @@ pub async fn handle_on_tx_sent(
 
     // Find xchain log; if present, relay msg to destination chain.
     let xchain_log = find_xchain_log(&receipt).await?;
+    let mut relay_tx_hash = None;
     if let Some(log) = xchain_log {
-        info!("Relaying message {tx_hash} to destination chain.");
+        info!("Interop message {tx_hash} detected.");
         let block = source_provider
             .get_block_by_hash(receipt.block_hash.expect("receipt block hash"))
             .await?
             .ok_or_else(|| format!("Block for receipt {tx_hash} not found"))?;
-        relay_message(
+        let res = relay_message(
             &log,
             block.header.timestamp,
             source_chain_id,
@@ -140,6 +162,7 @@ pub async fn handle_on_tx_sent(
             op_admin_provider,
         )
         .await?;
+        relay_tx_hash = res.map(|tx| tx.tx_hash().to_owned());
     }
-    Ok(())
+    Ok(relay_tx_hash)
 }

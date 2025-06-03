@@ -9,7 +9,7 @@ use contender_core::{
     agent_controller::AgentStore,
     alloy::primitives::utils::parse_units,
     db::DbOps,
-    spammer::{Spammer, TimedSpammer},
+    spammer::{Spammer, TimedSpammer, tx_actor::TxActorHandle},
     test_scenario::{PrometheusCollector, TestScenario, TestScenarioParams},
 };
 
@@ -17,8 +17,10 @@ use contender_sqlite::SqliteDb;
 use contender_testfile::TestConfig;
 use file_seed::Seedfile;
 use spam_callback::OpInteropCallback;
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 use tracing_subscriber::EnvFilter;
+
+use crate::spam_callback::OP_ACTOR_NAME;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,6 +45,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         agents.add_new_agent(name, count, &seedfile);
     }
 
+    let dest_client = alloy::providers::DynProvider::new(
+        alloy::providers::ProviderBuilder::new()
+            .network::<alloy::network::AnyNetwork>()
+            .connect_http(destination_url.to_owned()),
+    );
+    let dest_tx_actor = Arc::new(TxActorHandle::new(120, db.clone(), Arc::new(dest_client)));
+    let msg_handles = HashMap::from_iter([(OP_ACTOR_NAME.to_owned(), dest_tx_actor)]);
+
     let scenario_params = TestScenarioParams {
         rpc_url: source_url.to_owned(),
         builder_rpc_url: None,
@@ -51,6 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tx_type: alloy::consensus::TxType::Eip1559,
         pending_tx_timeout_secs: 10,
         bundle_type: Default::default(),
+        extra_msg_handles: Some(msg_handles),
     };
 
     let config = TestConfig::from_file("src/scenarios/l2MintAndSend.toml").unwrap();
