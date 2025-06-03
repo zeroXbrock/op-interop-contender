@@ -6,11 +6,12 @@ mod spam_callback;
 
 use contender_core::{
     agent_controller::AgentStore,
-    alloy::primitives::utils::parse_units,
     alloy::{
         consensus::TxType,
         network::AnyNetwork,
-        providers::{DynProvider, ProviderBuilder},
+        node_bindings::WEI_IN_ETHER,
+        primitives::U256,
+        providers::{DynProvider, Provider, ProviderBuilder},
         signers::local::PrivateKeySigner,
         transports::http::reqwest::Url,
     },
@@ -54,6 +55,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         agents.add_new_agent(name, count, &seedfile);
     }
 
+    let source_client = DynProvider::new(
+        ProviderBuilder::new()
+            .network::<AnyNetwork>()
+            .connect_http(source_url.to_owned()),
+    );
     let dest_client = DynProvider::new(
         ProviderBuilder::new()
             .network::<AnyNetwork>()
@@ -66,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rpc_url: source_url.to_owned(),
         builder_rpc_url: None,
         signers: vec![sender.to_owned()],
-        agent_store: agents,
+        agent_store: agents.to_owned(),
         tx_type: TxType::Eip1559,
         pending_tx_timeout_secs: 10,
         bundle_type: Default::default(),
@@ -87,14 +93,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let callback =
         OpInteropCallback::new(&source_url, &destination_url, &supersim_admin_url, None).await;
 
-    for (agent, _signer) in agent_defs {
-        scenario
-            .fund_agent_signers(
-                agent,
-                &sender.to_owned().into(),
-                parse_units("2", "ether").unwrap().get_absolute(),
-            )
-            .await?;
+    for (agent_name, _) in agent_defs {
+        if let Some(agent) = agents.get_agent(agent_name) {
+            // check balance of this test signer. if low, fund accounts
+            let test_signer = &agent.signers[0];
+            let balance = source_client.get_balance(test_signer.address()).await?;
+            if balance < WEI_IN_ETHER / U256::from(10) {
+                scenario
+                    .fund_agent_signers(agent_name, &sender.to_owned().into(), WEI_IN_ETHER)
+                    .await?;
+            }
+        }
     }
 
     let txs_per_batch = 250;
