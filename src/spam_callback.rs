@@ -1,6 +1,7 @@
 use crate::contracts::SUPERCHAIN_TOKEN_BRIDGE;
 use crate::op_relay::{SupersimAdminProvider, XCHAIN_LOG_TOPIC, relay_message};
 use alloy::network::{AnyTransactionReceipt, EthereumWallet};
+use alloy::primitives::TxHash;
 use alloy::rpc::types::Log;
 use contender_core::PrivateKeySigner;
 use contender_core::{
@@ -90,64 +91,61 @@ impl OnTxSent for OpInteropCallback {
         let tx_hash = pending_tx.tx_hash().to_owned();
 
         let handle = tokio_task::spawn(async move {
-            /* TODO:
-             - move all this async code to a separate async function `handle_relay_message`
-             - return Result<(), Box<dyn StdError>> from that function and cleanup error handling
-            */
-
-            // wait for tx to land
-            let _ = source_provider
-                .watch_pending_transaction(PendingTransactionConfig::new(tx_hash))
-                .await
-                .expect("Failed to watch pending transaction")
-                .await
-                .expect("Failed to get pending transaction");
-
-            // get receipt for logs
-            let receipt = source_provider.get_transaction_receipt(tx_hash).await;
-            if let Err(e) = receipt {
-                println!("Failed to get transaction receipt: {e}");
-                return;
-            }
-            let receipt = receipt.expect("receipt");
-
-            if receipt.is_none() {
-                println!("Transaction receipt not found.");
-                return;
-            }
-            let receipt = receipt.expect("receipt");
-
-            let xchain_log = find_xchain_log(&receipt).await;
-            if let Err(e) = xchain_log {
-                println!("Encountered error while looking for xchain log: {e}");
-                return;
-            }
-            let xchain_log = xchain_log.expect("xchain log");
-
-            if let Some(log) = xchain_log {
-                let block = source_provider
-                    .get_block_by_hash(receipt.block_hash.expect("receipt block hash"))
-                    .await
-                    .expect("block request")
-                    .expect("no block");
-                let res = relay_message(
-                    &log,
-                    block.header.timestamp,
-                    source_chain_id,
-                    dest_provider.as_ref(),
-                    op_admin_provider.as_ref(),
-                )
-                .await;
-                if let Err(e) = res {
-                    println!("Failed to relay message: {e}");
-                } else {
-                    println!("Message relayed successfully.");
-                }
-            }
+            handle_on_tx_sent(
+                &source_provider,
+                tx_hash,
+                source_chain_id,
+                &dest_provider,
+                &op_admin_provider,
+            )
+            .await
+            .map_err(|e| format!("Failed to handle on_tx_sent: {e}"))
+            .unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
+            });
         });
 
         Some(handle)
     }
+}
+
+pub async fn handle_on_tx_sent(
+    source_provider: &AnyProvider,
+    tx_hash: TxHash,
+    source_chain_id: u64,
+    destination_provider: &AnyProvider,
+    op_admin_provider: &SupersimAdminProvider,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // wait for tx to land
+    let _ = source_provider
+        .watch_pending_transaction(PendingTransactionConfig::new(tx_hash))
+        .await?
+        .await?;
+
+    // get receipt for logs
+    let receipt = source_provider
+        .get_transaction_receipt(tx_hash)
+        .await?
+        .ok_or(format!("tx receipt for {tx_hash} not found"))?;
+
+    // find xchain log if present
+    let xchain_log = find_xchain_log(&receipt).await?;
+    if let Some(log) = xchain_log {
+        let block = source_provider
+            .get_block_by_hash(receipt.block_hash.expect("receipt block hash"))
+            .await
+            .expect("block request")
+            .expect("no block");
+        relay_message(
+            &log,
+            block.header.timestamp,
+            source_chain_id,
+            destination_provider,
+            op_admin_provider,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 pub async fn find_xchain_log(
