@@ -1,3 +1,4 @@
+use contender_core::alloy::primitives::U256;
 use contender_core::generator::RandSeed;
 use contender_core::generator::seeder::{SeedValue, Seeder};
 use std::fs;
@@ -29,8 +30,8 @@ impl Seeder for Seedfile {
     fn seed_values(
         &self,
         amount: usize,
-        min: Option<alloy::primitives::U256>,
-        max: Option<alloy::primitives::U256>,
+        min: Option<U256>,
+        max: Option<U256>,
     ) -> Box<impl Iterator<Item = impl SeedValue>> {
         // this could be modified to return specific sequences to be used by the fuzzer
         self.seed.seed_values(amount, min, max)
@@ -46,7 +47,7 @@ impl Seeder for Seedfile {
         Self { seed }
     }
 
-    fn seed_from_u256(seed: alloy::primitives::U256) -> Self {
+    fn seed_from_u256(seed: U256) -> Self {
         let seed = RandSeed::seed_from_u256(seed);
         Self { seed }
     }
@@ -57,7 +58,7 @@ impl SeedValue for Seedfile {
         self.seed.as_bytes()
     }
 
-    fn as_u256(&self) -> alloy::primitives::U256 {
+    fn as_u256(&self) -> U256 {
         self.seed.as_u256()
     }
 

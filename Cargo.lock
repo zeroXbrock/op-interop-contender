@@ -4914,7 +4914,6 @@ dependencies = [
 name = "op-interop-contender"
 version = "0.1.0"
 dependencies = [
- "alloy",
  "contender_core",
  "contender_sqlite",
  "contender_testfile",

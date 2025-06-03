@@ -1,9 +1,8 @@
-use crate::contracts::{
-    L2_TO_L2_CROSS_DOMAIN_MESSENGER, SUPERCHAIN_TOKEN_BRIDGE, XCHAIN_LOG_TOPIC,
-};
-use alloy::{
+use crate::contracts::{L2_TO_L2_CROSS_DOMAIN_MESSENGER, SUPERCHAIN_TOKEN_BRIDGE};
+use contender_core::alloy::{
+    hex::FromHex,
     network::{AnyNetwork, AnyTransactionReceipt},
-    primitives::{Address, Bytes, U256},
+    primitives::{Address, Bytes, FixedBytes, U256},
     providers::{DynProvider, PendingTransactionConfig, Provider, ProviderBuilder},
     rpc::types::{AccessList, Log, TransactionRequest},
     sol,
@@ -12,7 +11,12 @@ use alloy::{
 };
 use contender_core::generator::types::AnyProvider;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+
+pub static XCHAIN_LOG_TOPIC: LazyLock<FixedBytes<32>> = LazyLock::new(|| {
+    FixedBytes::<32>::from_hex("0x382409ac69001e11931a28435afef442cbfd20d9891907e8fa373ba7d351f320")
+        .expect("invalid topic")
+});
 
 sol! {
     /// https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/interfaces/L2/ICrossL2Inbox.sol#L6-L12

@@ -4,11 +4,17 @@ mod op_relay;
 mod scenarios;
 mod spam_callback;
 
-use alloy::{signers::local::PrivateKeySigner, transports::http::reqwest::Url};
 use contender_core::{
     agent_controller::AgentStore,
     alloy::primitives::utils::parse_units,
-    db::DbOps,
+    alloy::{
+        consensus::TxType,
+        network::AnyNetwork,
+        providers::{DynProvider, ProviderBuilder},
+        signers::local::PrivateKeySigner,
+        transports::http::reqwest::Url,
+    },
+    db::{DbOps, SpamDuration, SpamRunRequest},
     spammer::{Spammer, TimedSpammer, tx_actor::TxActorHandle},
     test_scenario::{PrometheusCollector, TestScenario, TestScenarioParams},
 };
@@ -26,8 +32,10 @@ use crate::spam_callback::OP_ACTOR_NAME;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
 
-    let db = Arc::new(SqliteDb::new_memory());
-    db.create_tables()?;
+    let db = Arc::new(SqliteDb::from_file(".contender.db").expect("failed to open db"));
+    db.create_tables().unwrap_or_else(|_| {
+        // ignore; db won't be affected if tables already exist
+    });
     let seedfile = Seedfile::new();
     let sender = PrivateKeySigner::from_str(
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
@@ -37,7 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let destination_url = Url::from_str("http://localhost:9546").unwrap();
     let supersim_admin_url = Url::from_str("http://localhost:8420").unwrap();
 
-    let spammer = TimedSpammer::new(Duration::from_millis(500));
+    let interval = Duration::from_millis(500);
+    let spammer = TimedSpammer::new(interval);
 
     let mut agents = AgentStore::new();
     let agent_defs = [("admin", 1), ("spammers", 10)];
@@ -45,9 +54,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         agents.add_new_agent(name, count, &seedfile);
     }
 
-    let dest_client = alloy::providers::DynProvider::new(
-        alloy::providers::ProviderBuilder::new()
-            .network::<alloy::network::AnyNetwork>()
+    let dest_client = DynProvider::new(
+        ProviderBuilder::new()
+            .network::<AnyNetwork>()
             .connect_http(destination_url.to_owned()),
     );
     let dest_tx_actor = Arc::new(TxActorHandle::new(120, db.clone(), Arc::new(dest_client)));
@@ -58,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder_rpc_url: None,
         signers: vec![sender.to_owned()],
         agent_store: agents,
-        tx_type: alloy::consensus::TxType::Eip1559,
+        tx_type: TxType::Eip1559,
         pending_tx_timeout_secs: 10,
         bundle_type: Default::default(),
         extra_msg_handles: Some(msg_handles),
@@ -88,11 +97,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
     }
 
-    scenario.deploy_contracts().await?;
-    scenario.run_setup().await?;
+    let txs_per_batch = 10;
+    let duration = 10;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis();
+    let run_id = db.insert_run(&SpamRunRequest {
+        timestamp: timestamp as usize,
+        tx_count: (txs_per_batch * duration) as usize,
+        scenario_name: "OP Interop Mint and Relay".to_string(),
+        rpc_url: format!("{source_url} -> {destination_url}"),
+        txs_per_duration: txs_per_batch,
+        duration: SpamDuration::Seconds((duration * interval.as_millis() as u64) / 1000),
+        timeout: 5,
+    })?;
 
     spammer
-        .spam_rpc(&mut scenario, 10, 1, None, Arc::new(callback))
+        .spam_rpc(&mut scenario, 10, 1, Some(run_id), Arc::new(callback))
         .await?;
 
     Ok(())
