@@ -97,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
     }
 
-    let txs_per_batch = 10;
+    let txs_per_batch = 250;
     let duration = 10;
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -114,7 +114,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     spammer
-        .spam_rpc(&mut scenario, 10, 1, Some(run_id), Arc::new(callback))
+        .spam_rpc(
+            &mut scenario,
+            txs_per_batch,
+            duration,
+            Some(run_id),
+            Arc::new(callback),
+        )
         .await?;
 
     Ok(())
