@@ -106,8 +106,7 @@ impl SupersimAdminProvider {
 }
 
 pub fn build_payload(log: &Log) -> Bytes {
-    let mut payload = vec![];
-    payload.extend_from_slice(log.topics().concat().as_slice());
+    let mut payload = log.topics().concat();
     payload.extend_from_slice(&log.data().data);
     payload.into()
 }

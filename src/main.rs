@@ -176,8 +176,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             data_dir.to_str().expect("invalid data dir"),
         )
         .await?;
-    } else {
-        info!("Skipping report generation.");
     }
 
     Ok(())
