@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-contender_core = { git = "https://github.com/flashbots/contender", branch = "feat/ext-api-support" }
-contender_report = { git = "https://github.com/flashbots/contender", branch = "feat/ext-api-support" }
-contender_sqlite = { git = "https://github.com/flashbots/contender", branch = "feat/ext-api-support" }
-contender_testfile = { git = "https://github.com/flashbots/contender", branch = "feat/ext-api-support" }
+contender_core = { git = "https://github.com/flashbots/contender" }
+contender_report = { git = "https://github.com/flashbots/contender" }
+contender_sqlite = { git = "https://github.com/flashbots/contender" }
+contender_testfile = { git = "https://github.com/flashbots/contender" }
 # contender_core.path = "../contender/crates/core"
 # contender_report.path = "../contender/crates/report"
 # contender_sqlite.path = "../contender/crates/sqlite_db"
