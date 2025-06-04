@@ -1,3 +1,5 @@
+//! Left here as an example of how to set up a spam scenario manually.
+
 use contender_core::generator::types::{CreateDefinition, FunctionCallDefinition, SpamRequest};
 use contender_testfile::TestConfig;
 use std::sync::LazyLock;

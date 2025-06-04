@@ -39,13 +39,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // ignore; db won't be affected if tables already exist
     });
     let seedfile = Seedfile::new();
-    let sender = PrivateKeySigner::from_str(
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-    )
+    let sender = PrivateKeySigner::from_str(&read_var(
+        "SPAM_SENDER_PRIVATE_KEY",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_owned(),
+    ))
     .unwrap();
-    let source_url = Url::from_str("http://localhost:9545").unwrap();
-    let destination_url = Url::from_str("http://localhost:9546").unwrap();
-    let supersim_admin_url = Url::from_str("http://localhost:8420").unwrap();
+    let source_url = Url::from_str(&read_var(
+        "SPAM_ORIGIN_RPC",
+        "http://localhost:9545".to_string(),
+    ))
+    .unwrap();
+    let destination_url = Url::from_str(&read_var(
+        "SPAM_DEST_RPC",
+        "http://localhost:9546".to_string(),
+    ))
+    .unwrap();
+    let supersim_admin_url = Url::from_str(&read_var(
+        "OP_ADMIN_URL",
+        "http://localhost:8420".to_string(),
+    ))
+    .unwrap();
+    let txs_per_batch = read_var("SPAM_TXS_PER_BATCH", 25);
+    let duration = read_var("SPAM_DURATION", 5);
+    let scenario_file = read_var(
+        "SPAM_SCENARIO_FILE",
+        "scenario_files/l2MintAndSend.toml".to_string(),
+    );
 
     let interval = Duration::from_millis(500);
     let spammer = TimedSpammer::new(interval);
@@ -80,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_msg_handles: Some(msg_handles),
     };
 
-    let config = TestConfig::from_file("src/scenarios/l2MintAndSend.toml").unwrap();
+    let config = TestConfig::from_file(&scenario_file).unwrap();
 
     let mut scenario = TestScenario::new(
         config,
@@ -119,18 +138,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let read_var = |varname: &str, default: u64| {
-        std::env::var(varname)
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or_else(|| {
-                warn!("{varname} not set, defaulting to {default}");
-                default
-            })
-    };
-
-    let txs_per_batch = read_var("SPAM_TXS_PER_BATCH", 25);
-    let duration = read_var("SPAM_DURATION", 5);
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("Time went backwards")
@@ -166,4 +173,14 @@ fn init_tracing() {
         .with_target(true)
         .with_line_number(true)
         .init();
+}
+
+fn read_var<T: FromStr + std::fmt::Display + Clone>(varname: &str, default: T) -> T {
+    std::env::var(varname)
+        .ok()
+        .and_then(|v| v.parse::<T>().ok())
+        .unwrap_or_else(|| {
+            warn!("{varname} not set, defaulting to {default}");
+            default.clone()
+        })
 }
