@@ -19,12 +19,11 @@ use contender_core::{
     spammer::{Spammer, TimedSpammer, tx_actor::TxActorHandle},
     test_scenario::{PrometheusCollector, TestScenario, TestScenarioParams},
 };
-
 use contender_sqlite::SqliteDb;
 use contender_testfile::TestConfig;
 use file_seed::Seedfile;
 use spam_callback::OpInteropCallback;
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, ops::Deref, str::FromStr, sync::Arc, time::Duration};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -33,8 +32,11 @@ use crate::spam_callback::OP_ACTOR_NAME;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
+    std::fs::create_dir_all(".contender/reports").unwrap_or_else(|_| {
+        warn!("Failed to create report directory, reports will not be saved.");
+    });
 
-    let db = Arc::new(SqliteDb::from_file(".contender.db").expect("failed to open db"));
+    let db = Arc::new(SqliteDb::from_file(".contender/contender.db").expect("failed to open db"));
     db.create_tables().unwrap_or_else(|_| {
         // ignore; db won't be affected if tables already exist
     });
@@ -65,6 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "SPAM_SCENARIO_FILE",
         "scenario_files/l2MintAndSend.toml".to_string(),
     );
+    let make_report = read_var("SPAM_MAKE_REPORT", false);
 
     let interval = Duration::from_millis(500);
     let spammer = TimedSpammer::new(interval);
@@ -146,7 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         timestamp: timestamp as usize,
         tx_count: (txs_per_batch * duration) as usize,
         scenario_name: "OP Interop Mint and Relay".to_string(),
-        rpc_url: format!("{source_url} -> {destination_url}"),
+        rpc_url: destination_url.to_string(),
         txs_per_duration: txs_per_batch,
         duration: SpamDuration::Seconds((duration * interval.as_millis() as u64) / 1000),
         timeout: 5,
@@ -161,6 +164,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(callback),
         )
         .await?;
+
+    if make_report {
+        info!("Generating report...");
+        let data_dir = std::fs::canonicalize(".contender")?;
+        info!("Contender directory: {}", data_dir.display());
+        contender_report::command::report(
+            Some(run_id),
+            0,
+            db.deref(),
+            data_dir.to_str().expect("invalid data dir"),
+        )
+        .await?;
+    } else {
+        info!("Skipping report generation.");
+    }
 
     Ok(())
 }

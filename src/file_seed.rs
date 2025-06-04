@@ -4,7 +4,7 @@ use contender_core::generator::seeder::{SeedValue, Seeder};
 use std::fs;
 use std::path::Path;
 
-static SEEDFILE_PATH: &str = ".seed";
+static SEEDFILE_PATH: &str = ".contender/seed";
 
 #[derive(Clone, Debug)]
 pub struct Seedfile {
