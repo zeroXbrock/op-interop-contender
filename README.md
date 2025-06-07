@@ -22,7 +22,16 @@ cd op-interop-contender
 cargo run
 ```
 
-> The default settings should work when running against supersim, but if you need to change them, you can set the desired variables in your environment. See [here](./src/main.rs#L42-L63) for reference. Any variables not set will also show up as a warning when you run the script.
+You can generate a contender report after spamming by setting `SPAM_MAKE_REPORT` in your environment:
+
+```sh
+export SPAM_MAKE_REPORT=true
+cargo run
+```
+
+> The default settings should work when running against supersim, but if you need to change them, you can set the desired variables in your environment. See [here](./src/main.rs#L42-L63) for reference.
+>
+> Any variables not set will also show up as a warning when you run the script.
 
 ## how it works
 
