@@ -14,6 +14,13 @@ supersim
 
 This will start a dev environment with 3 nodes: an L1 node on localhost:8545, an L2 node on localhost:9545, and another L2 node on localhost:9546.
 
+💁‍♂️ You can skip this step if you're targeting a different interop deployment. Just set the following variables in your environment to target your nodes:
+
+- `SPAM_SENDER_PRIVATE_KEY` (used to send funds to spammers on src. chain, and to send relay txs on dest. chain)
+- `SPAM_ORIGIN_RPC` (source L2)
+- `SPAM_DEST_RPC` (destination L2)
+- `OP_ADMIN_URL` (must support `admin_getAccessListForIdentifier` RPC method)
+
 In a new terminal, clone this repo and run the binary:
 
 ```sh
