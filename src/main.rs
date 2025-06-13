@@ -1,3 +1,4 @@
+mod args;
 mod contracts;
 mod file_seed;
 mod op_relay;
@@ -12,8 +13,6 @@ use contender_core::{
         node_bindings::WEI_IN_ETHER,
         primitives::{U256, utils::format_ether},
         providers::{DynProvider, Provider, ProviderBuilder},
-        signers::local::PrivateKeySigner,
-        transports::http::reqwest::Url,
     },
     db::{DbOps, SpamDuration, SpamRunRequest},
     spammer::{Spammer, TimedSpammer, tx_actor::TxActorHandle},
@@ -23,11 +22,11 @@ use contender_sqlite::SqliteDb;
 use contender_testfile::TestConfig;
 use file_seed::Seedfile;
 use spam_callback::OpInteropCallback;
-use std::{collections::HashMap, ops::Deref, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-use crate::spam_callback::OP_ACTOR_NAME;
+use crate::{args::SpamArgs, spam_callback::OP_ACTOR_NAME};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,33 +40,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // ignore; db won't be affected if tables already exist
     });
     let seedfile = Seedfile::new();
-    let sender = PrivateKeySigner::from_str(&read_var(
-        "SPAM_SENDER_PRIVATE_KEY",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_owned(),
-    ))
-    .unwrap();
-    let source_url = Url::from_str(&read_var(
-        "SPAM_ORIGIN_RPC",
-        "http://localhost:9545".to_string(),
-    ))
-    .unwrap();
-    let destination_url = Url::from_str(&read_var(
-        "SPAM_DEST_RPC",
-        "http://localhost:9546".to_string(),
-    ))
-    .unwrap();
-    let supersim_admin_url = Url::from_str(&read_var(
-        "OP_ADMIN_URL",
-        "http://localhost:8420".to_string(),
-    ))
-    .unwrap();
-    let txs_per_batch = read_var("SPAM_TXS_PER_BATCH", 25);
-    let duration = read_var("SPAM_DURATION", 5);
-    let scenario_file = read_var(
-        "SPAM_SCENARIO_FILE",
-        "scenario_files/l2MintAndSend.toml".to_string(),
-    );
-    let make_report = read_var("SPAM_MAKE_REPORT", false);
+
+    let SpamArgs {
+        sender,
+        source_url,
+        destination_url,
+        supersim_admin_url,
+        txs_per_batch,
+        duration,
+        scenario_file,
+        make_report,
+    } = args::SpamArgs::from_env();
 
     let interval = Duration::from_millis(500);
     let spammer = TimedSpammer::new(interval);
@@ -189,14 +172,4 @@ fn init_tracing() {
         .with_target(true)
         .with_line_number(true)
         .init();
-}
-
-fn read_var<T: FromStr + std::fmt::Display + Clone>(varname: &str, default: T) -> T {
-    std::env::var(varname)
-        .ok()
-        .and_then(|v| v.parse::<T>().ok())
-        .unwrap_or_else(|| {
-            warn!("{varname} not set, defaulting to {default}");
-            default.clone()
-        })
 }
