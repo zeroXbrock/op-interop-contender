@@ -45,15 +45,15 @@ impl OpInteropCallback {
             .get_chain_id()
             .await
             .expect("Failed to get source chain ID");
-        let destination_wallet = if let Some(signer) = admin_signer {
-            EthereumWallet::from(signer.to_owned())
-        } else {
-            PrivateKeySigner::from_str(
-                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        let destination_wallet: EthereumWallet = admin_signer
+            .unwrap_or(
+                &PrivateKeySigner::from_str(
+                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                )
+                .unwrap(),
             )
-            .unwrap()
-            .into()
-        };
+            .to_owned()
+            .into();
         let destination_provider = DynProvider::new(
             ProviderBuilder::new()
                 .network::<AnyNetwork>()
