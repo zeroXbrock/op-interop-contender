@@ -33,7 +33,7 @@ use crate::{
     contracts::bytecode,
     scenarios::bulletin_board,
     spam_callback::OP_ACTOR_NAME,
-    utils::{deploy_create2_contract, deploy_create2_factory},
+    utils::{deploy_create2_contract, deploy_create2_factory, get_fresh_sender},
 };
 
 #[tokio::main]
@@ -96,30 +96,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // fund special signer on each client (for CREATE2 factory deployment)
-    let admin_signer = {
-        let admin_signer = PrivateKeySigner::random();
-        let balance = dest_client.get_balance(admin_signer.address()).await?;
-        if balance < WEI_IN_ETHER {
-            let tx = TransactionRequest::default()
-                .from(sender.address())
-                .to(admin_signer.address())
-                .value(U256::from(WEI_IN_ETHER));
-            for (idx, client) in [&source_client, &dest_client].iter().enumerate() {
-                let tx_hash = client
-                    .send_transaction(tx.to_owned().into())
-                    .await?
-                    .with_required_confirmations(1)
-                    .watch()
-                    .await?;
-                info!(
-                    "Funded admin signer {} on chain {idx} with {} eth ({tx_hash})",
-                    admin_signer.address(),
-                    format_ether(WEI_IN_ETHER)
-                );
-            }
-        }
-        admin_signer
-    };
+    let admin_signer =
+        get_fresh_sender(&[source_client.as_ref(), dest_client.as_ref()], &sender).await?;
 
     // deploy create2 factory & bulletin board contract on both chains
     let mut bulletin_addrs = vec![];
@@ -167,7 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_id = db.insert_run(&SpamRunRequest {
         timestamp: timestamp as usize,
         tx_count: (txs_per_batch * duration) as usize,
-        scenario_name: "OP Interop Mint and Relay".to_string(),
+        scenario_name: "OP Interop Message-Passing".to_string(),
         rpc_url: destination_url.to_string(),
         txs_per_duration: txs_per_batch,
         duration: SpamDuration::Seconds((duration * interval.as_millis() as u64) / 1000),

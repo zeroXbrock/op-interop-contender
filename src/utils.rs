@@ -2,7 +2,8 @@ use crate::{contracts::bytecode, utils::Create2Factory::deployCall};
 use contender_core::{
     alloy::{
         network::{AnyTxEnvelope, EthereumWallet, ReceiptResponse, TransactionBuilder},
-        primitives::{Address, Bytes, FixedBytes, TxKind},
+        node_bindings::WEI_IN_ETHER,
+        primitives::{Address, Bytes, FixedBytes, TxKind, U256, utils::format_ether},
         providers::Provider,
         rpc::types::{TransactionInput, TransactionRequest},
         signers::local::PrivateKeySigner,
@@ -12,6 +13,7 @@ use contender_core::{
     generator::types::AnyProvider,
 };
 use std::str::FromStr;
+use tracing::info;
 
 sol! {
     contract Create2Factory {
@@ -116,6 +118,37 @@ async fn prepare_tx_request(
     let gas_estimate = provider.estimate_gas(tx.to_owned().into()).await?;
 
     Ok(tx.with_gas_limit(gas_estimate))
+}
+
+/// Sends funds to a fresh account on each client, then returns the funded signer.
+pub async fn get_fresh_sender(
+    clients: &[&AnyProvider],
+    source_funder: &PrivateKeySigner,
+) -> Result<PrivateKeySigner, Box<dyn std::error::Error>> {
+    let admin_signer = PrivateKeySigner::random();
+    if clients.is_empty() {
+        return Err("No clients provided".into());
+    }
+    let fund_amount = U256::from(WEI_IN_ETHER);
+    let tx = TransactionRequest::default()
+        .from(source_funder.address())
+        .to(admin_signer.address())
+        .value(fund_amount);
+    for (idx, client) in clients.iter().enumerate() {
+        let tx_hash = client
+            .send_transaction(tx.to_owned().into())
+            .await?
+            .with_required_confirmations(1)
+            .watch()
+            .await?;
+        info!(
+            "Funded admin signer {} on chain {idx} with {} eth ({tx_hash})",
+            admin_signer.address(),
+            format_ether(fund_amount)
+        );
+    }
+
+    Ok(admin_signer)
 }
 
 #[cfg(test)]
