@@ -8,6 +8,12 @@ pub static L2_TO_L2_CROSS_DOMAIN_MESSENGER: LazyLock<Address> = LazyLock::new(||
         .expect("Invalid address")
 });
 
+pub static CROSS_L2_INBOX: LazyLock<Address> = LazyLock::new(|| {
+    "0x4200000000000000000000000000000000000022"
+        .parse::<Address>()
+        .expect("Invalid address")
+});
+
 pub mod bytecode {
     use std::{str::FromStr, sync::LazyLock};
 
