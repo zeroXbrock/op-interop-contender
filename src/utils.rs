@@ -1,4 +1,4 @@
-use crate::{contracts::bytecode, utils::Create2Factory::deployCall};
+use crate::utils::Create2Factory::deployCall;
 use contender_core::{
     alloy::{
         consensus::{EthereumTxEnvelope, TxEip4844Variant},
@@ -13,7 +13,6 @@ use contender_core::{
     },
     generator::types::AnyProvider,
 };
-use std::str::FromStr;
 use tracing::info;
 
 sol! {
@@ -22,35 +21,6 @@ sol! {
 
         function deploy(bytes32 salt, bytes calldata code) external payable returns (address);
     }
-}
-
-pub async fn deploy_create2_factory(
-    provider: &AnyProvider,
-    sender: &PrivateKeySigner,
-) -> Result<Address, Box<dyn std::error::Error>> {
-    let tx = TransactionRequest {
-        from: Some(sender.address()),
-        to: Some(TxKind::Create),
-        input: TransactionInput::both(
-            Bytes::from_str(bytecode::CREATE2_FACTORY).expect("invalid bytecode hex"),
-        ),
-        ..Default::default()
-    };
-    let signed_tx = prepare_tx_request(tx, provider, sender).await?;
-
-    let tx_hash = provider
-        .send_tx_envelope(AnyTxEnvelope::Ethereum(signed_tx))
-        .await?
-        .watch()
-        .await?;
-    let receipt = provider.get_transaction_receipt(tx_hash).await?;
-    // get the contract address from the receipt
-    if let Some(receipt) = receipt {
-        if let Some(address) = receipt.contract_address() {
-            return Ok(address);
-        }
-    }
-    Err("Deployment failed or no contract address found".into())
 }
 
 pub async fn deploy_create2_contract(
@@ -98,6 +68,35 @@ pub async fn deploy_create2_contract(
     }
 
     Err("Deployment failed or no Deployed event found".into())
+}
+
+pub async fn deploy_contract(
+    bytecode: Bytes,
+    provider: &AnyProvider,
+    sender: &PrivateKeySigner,
+) -> Result<Address, Box<dyn std::error::Error>> {
+    let tx = TransactionRequest {
+        from: Some(sender.address()),
+        to: Some(TxKind::Create),
+        input: TransactionInput::both(bytecode),
+        ..Default::default()
+    };
+    let signed_tx = prepare_tx_request(tx, provider, sender).await?;
+
+    let tx_hash = provider
+        .send_tx_envelope(AnyTxEnvelope::Ethereum(signed_tx))
+        .await?
+        .with_required_confirmations(1)
+        .watch()
+        .await?;
+
+    let receipt = provider.get_transaction_receipt(tx_hash).await?;
+    if let Some(receipt) = receipt {
+        if let Some(address) = receipt.contract_address() {
+            return Ok(address);
+        }
+    }
+    Err("Deployment failed or no contract address found".into())
 }
 
 /// Prepares a transaction request with the necessary fields filled in, such as gas price, nonce, & gas limit,
@@ -157,6 +156,7 @@ pub async fn get_fresh_sender(
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::contracts::bytecode;
     use contender_core::alloy::{
         network::AnyNetwork,
         node_bindings::{Anvil, AnvilInstance},
@@ -184,7 +184,10 @@ pub mod tests {
         let provider = get_provider(&anvil);
         let signer = get_signer();
 
-        let factory_address = deploy_create2_factory(&provider, &signer).await.unwrap();
+        let factory_address =
+            deploy_contract(bytecode::CREATE2_FACTORY.to_owned(), &provider, &signer)
+                .await
+                .unwrap();
         // check code at the factory address
         let code = provider.get_code_at(factory_address).await.unwrap();
         println!("Factory deployed at: {:?}", factory_address);
@@ -201,14 +204,19 @@ pub mod tests {
         let provider = get_provider(&anvil);
         let signer = get_signer();
 
-        let factory_address = deploy_create2_factory(&provider, &signer).await?;
+        let factory_address =
+            deploy_contract(bytecode::CREATE2_FACTORY.to_owned(), &provider, &signer).await?;
         let salt = [1u8; 32];
-        let code = Bytes::from_str(bytecode::BULLETIN_BOARD)?;
 
-        let contract_address =
-            deploy_create2_contract(factory_address, salt.into(), code, &provider, &signer)
-                .await
-                .unwrap();
+        let contract_address = deploy_create2_contract(
+            factory_address,
+            salt.into(),
+            bytecode::BULLETIN_BOARD.to_owned(),
+            &provider,
+            &signer,
+        )
+        .await
+        .unwrap();
 
         // check code at the contract address
         let code_at_address = provider.get_code_at(contract_address).await?;
@@ -230,10 +238,11 @@ pub mod tests {
         let provider2 = get_provider(&anvil2);
         let signer = get_signer();
 
-        let factory_address_1 = deploy_create2_factory(&provider1, &signer).await?;
-        let factory_address_2 = deploy_create2_factory(&provider2, &signer).await?;
+        let factory_address_1 =
+            deploy_contract(bytecode::CREATE2_FACTORY.to_owned(), &provider1, &signer).await?;
+        let factory_address_2 =
+            deploy_contract(bytecode::CREATE2_FACTORY.to_owned(), &provider2, &signer).await?;
         let salt = [1u8; 32];
-        let code = Bytes::from_str(bytecode::BULLETIN_BOARD)?;
 
         println!(
             "Factory addresses: {:?} on chain 1, {:?} on chain 2",
@@ -243,15 +252,20 @@ pub mod tests {
         let contract_address1 = deploy_create2_contract(
             factory_address_1,
             salt.into(),
-            code.clone(),
+            bytecode::BULLETIN_BOARD.to_owned(),
             &provider1,
             &signer,
         )
         .await?;
 
-        let contract_address2 =
-            deploy_create2_contract(factory_address_2, salt.into(), code, &provider2, &signer)
-                .await?;
+        let contract_address2 = deploy_create2_contract(
+            factory_address_2,
+            salt.into(),
+            bytecode::BULLETIN_BOARD.to_owned(),
+            &provider2,
+            &signer,
+        )
+        .await?;
 
         assert_eq!(contract_address1, contract_address2);
         println!(

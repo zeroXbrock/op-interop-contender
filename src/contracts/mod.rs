@@ -9,6 +9,16 @@ pub static L2_TO_L2_CROSS_DOMAIN_MESSENGER: LazyLock<Address> = LazyLock::new(||
 });
 
 pub mod bytecode {
-    pub static BULLETIN_BOARD: &str = include_str!("./CrossChainBulletinBoard.hex");
-    pub static CREATE2_FACTORY: &str = include_str!("./Create2Factory.hex");
+    use std::{str::FromStr, sync::LazyLock};
+
+    use contender_core::alloy::primitives::Bytes;
+
+    pub static BULLETIN_BOARD: LazyLock<Bytes> = LazyLock::new(|| {
+        Bytes::from_str(include_str!("./CrossChainBulletinBoard.hex"))
+            .expect("failed to parse CrossChainBulletinBoard bytecode")
+    });
+    pub static CREATE2_FACTORY: LazyLock<Bytes> = LazyLock::new(|| {
+        Bytes::from_str(include_str!("./Create2Factory.hex"))
+            .expect("failed to parse Create2Factory bytecode")
+    });
 }

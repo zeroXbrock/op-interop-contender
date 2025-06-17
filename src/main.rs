@@ -12,7 +12,6 @@ use contender_core::{
         consensus::TxType,
         network::AnyNetwork,
         node_bindings::WEI_IN_ETHER,
-        primitives::{Bytes, utils::format_ether},
         providers::{DynProvider, Provider, ProviderBuilder},
     },
     db::{DbOps, SpamDuration, SpamRunRequest},
@@ -22,7 +21,7 @@ use contender_core::{
 use contender_sqlite::SqliteDb;
 use file_seed::Seedfile;
 use spam_callback::OpInteropCallback;
-use std::{collections::HashMap, ops::Deref, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -31,7 +30,7 @@ use crate::{
     contracts::bytecode,
     scenarios::bulletin_board,
     spam_callback::OP_ACTOR_NAME,
-    utils::{deploy_create2_contract, deploy_create2_factory, get_fresh_sender},
+    utils::{deploy_contract, deploy_create2_contract, get_fresh_sender},
 };
 
 #[tokio::main]
@@ -101,14 +100,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // deploy create2 factory & bulletin board contract on both chains
     let mut bulletin_addrs = vec![];
     for (idx, client) in [&source_client, &dest_client].iter().enumerate() {
-        let factory_address = deploy_create2_factory(&client, &admin_signer).await?;
+        let factory_address =
+            deploy_contract(bytecode::CREATE2_FACTORY.to_owned(), &client, &admin_signer).await?;
         info!("Deployed Create2 factory at: {}", factory_address);
 
         let salt = [1u8; 32]; // use a fixed salt for simplicity
         let bulletin_address = deploy_create2_contract(
             factory_address,
             salt.into(),
-            Bytes::from_str(bytecode::BULLETIN_BOARD)?,
+            bytecode::BULLETIN_BOARD.to_owned(),
             &client,
             &admin_signer,
         )
@@ -158,21 +158,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let test_signer = &agent.signers[0];
             let balance = source_client.get_balance(test_signer.address()).await?;
             if balance < WEI_IN_ETHER {
-                let pending_txs = scenario
-                    .fund_agent_signers(agent_name, &sender.to_owned().into(), WEI_IN_ETHER)
+                agent
+                    .fund_signers(&sender, WEI_IN_ETHER, source_client.clone())
                     .await?;
-                for tx in &pending_txs {
-                    // wait for the tx to be mined
-                    let mined_hash = source_client
-                        .watch_pending_transaction(tx.to_owned())
-                        .await?
-                        .await?;
-                    info!(
-                        "Funded {} with {} eth ({mined_hash})",
-                        test_signer.address(),
-                        format_ether(WEI_IN_ETHER)
-                    );
-                }
             }
         }
     }
