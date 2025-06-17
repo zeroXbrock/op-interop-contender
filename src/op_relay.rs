@@ -1,4 +1,4 @@
-use crate::contracts::{L2_TO_L2_CROSS_DOMAIN_MESSENGER, SUPERCHAIN_TOKEN_BRIDGE};
+use crate::contracts::L2_TO_L2_CROSS_DOMAIN_MESSENGER;
 use contender_core::alloy::{
     hex::FromHex,
     network::{AnyNetwork, AnyTransactionReceipt},
@@ -152,11 +152,6 @@ pub async fn relay_message(
 pub async fn find_xchain_log(
     receipt: &AnyTransactionReceipt,
 ) -> Result<Option<Log>, Box<dyn std::error::Error>> {
-    match receipt.inner.to {
-        Some(to) if to == *SUPERCHAIN_TOKEN_BRIDGE => {}
-        _ => return Ok(None),
-    };
-
     let log = receipt
         .inner
         .inner

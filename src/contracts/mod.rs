@@ -8,8 +8,7 @@ pub static L2_TO_L2_CROSS_DOMAIN_MESSENGER: LazyLock<Address> = LazyLock::new(||
         .expect("Invalid address")
 });
 
-pub static SUPERCHAIN_TOKEN_BRIDGE: LazyLock<Address> = LazyLock::new(|| {
-    "0x4200000000000000000000000000000000000028"
-        .parse::<Address>()
-        .expect("Invalid address")
-});
+pub mod bytecode {
+    pub static BULLETIN_BOARD: &str = include_str!("./CrossChainBulletinBoard.hex");
+    pub static CREATE2_FACTORY: &str = include_str!("./Create2Factory.hex");
+}

@@ -10,7 +10,6 @@ pub struct SpamArgs {
     pub supersim_admin_url: Url,
     pub txs_per_batch: u64,
     pub duration: u64,
-    pub scenario_file: String,
     pub make_report: bool,
 }
 
@@ -42,10 +41,6 @@ impl SpamArgs {
 
         let txs_per_batch = read_var("SPAM_TXS_PER_BATCH", 25);
         let duration = read_var("SPAM_DURATION", 5);
-        let scenario_file = read_var(
-            "SPAM_SCENARIO_FILE",
-            "scenario_files/l2MintAndSend.toml".to_string(),
-        );
         let make_report = read_var("SPAM_MAKE_REPORT", false);
 
         Self {
@@ -55,7 +50,6 @@ impl SpamArgs {
             supersim_admin_url,
             txs_per_batch,
             duration,
-            scenario_file,
             make_report,
         }
     }
@@ -67,6 +61,6 @@ fn read_var<T: FromStr + std::fmt::Display + Clone>(varname: &str, default: T) -
         .and_then(|v| v.parse::<T>().ok())
         .unwrap_or_else(|| {
             warn!("{varname} not set, defaulting to {default}");
-            default.clone()
+            default
         })
 }
