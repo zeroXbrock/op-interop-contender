@@ -1,14 +1,29 @@
 use contender_core::alloy::{
     primitives::{Address, Bytes, FixedBytes, U256, keccak256},
     rpc::types::{AccessList, AccessListItem, Log},
-    sol,
 };
-use serde::{Deserialize, Serialize};
 
-use crate::contracts;
+use crate::contracts::{self, Identifier};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+pub async fn get_access_list_for_identifier(
+    identifier: &IdentifierWithPayload,
+) -> Result<AccessList, Box<dyn std::error::Error>> {
+    if identifier.origin == Address::ZERO {
+        return Err("Origin address cannot be zero".into());
+    }
+
+    let access = identifier
+        .checksum_args(keccak256(identifier.payload.to_owned()))
+        .access();
+    let access_list: AccessList = vec![AccessListItem {
+        address: contracts::CROSS_L2_INBOX.to_owned(),
+        storage_keys: encode_access_list(&[access]),
+    }]
+    .into();
+
+    Ok(access_list)
+}
+
 pub struct IdentifierWithPayload {
     pub origin: Address,
     pub block_number: u64,
@@ -34,46 +49,6 @@ pub struct Access {
     pub checksum: FixedBytes<32>,
 }
 
-pub struct AdminAPI {}
-
-sol! {
-    /// https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/interfaces/L2/ICrossL2Inbox.sol#L6-L12
-    struct Identifier {
-        address origin;      // Account (contract) that emits the log
-        uint256 blocknumber; // Block number in which the log was emitted
-        uint256 logIndex;    // Index of the log in the array of all logs emitted in the block
-        uint256 timestamp;   // Timestamp that the log was emitted
-        uint256 chainId;     // Chain ID of the chain that emitted the log
-    }
-
-    /// https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/L2/L2ToL2CrossDomainMessenger.sol#L203-L206
-    function relayMessage(
-        Identifier calldata _id,
-        bytes calldata _sentMessage,
-    ) external payable returns (bytes memory);
-}
-
-impl AdminAPI {
-    pub async fn get_access_list_for_identifier(
-        identifier: &IdentifierWithPayload,
-    ) -> Result<AccessList, Box<dyn std::error::Error>> {
-        if identifier.origin == Address::ZERO {
-            return Err("Origin address cannot be zero".into());
-        }
-
-        let access = identifier
-            .checksum_args(keccak256(identifier.payload.to_owned()))
-            .access();
-        let access_list: AccessList = vec![AccessListItem {
-            address: contracts::CROSS_L2_INBOX.to_owned(),
-            storage_keys: encode_access_list(&[access]),
-        }]
-        .into();
-
-        Ok(access_list)
-    }
-}
-
 impl IdentifierWithPayload {
     pub fn new(log: &Log, timestamp: u64, chain_id: u64, payload: Bytes) -> Self {
         Self {
@@ -96,7 +71,7 @@ impl IdentifierWithPayload {
         }
     }
 
-    pub fn checksum_args(&self, msg_hash: FixedBytes<32>) -> ChecksumArgs {
+    fn checksum_args(&self, msg_hash: FixedBytes<32>) -> ChecksumArgs {
         ChecksumArgs {
             block_number: self.block_number,
             timestamp: self.timestamp,
@@ -108,8 +83,7 @@ impl IdentifierWithPayload {
 }
 
 impl Access {
-    pub fn lookup_entry(&self) -> FixedBytes<32> {
-        println!("calculating lookup entry");
+    fn lookup_entry(&self) -> FixedBytes<32> {
         const PREFIX_LOOKUP: u8 = 0x01;
 
         let mut out = [0u8; 32];
@@ -130,8 +104,7 @@ impl Access {
         FixedBytes::from(out)
     }
 
-    pub fn chain_id_extension_entry(&self) -> FixedBytes<32> {
-        println!("calculating chain_id extension entry");
+    fn chain_id_extension_entry(&self) -> FixedBytes<32> {
         const PREFIX_CHAIN_ID_EXTENSION: u8 = 0x02;
         let mut out = [0u8; 32];
         out[0] = PREFIX_CHAIN_ID_EXTENSION;
@@ -142,7 +115,7 @@ impl Access {
 }
 
 impl ChecksumArgs {
-    pub fn access(&self) -> Access {
+    fn access(&self) -> Access {
         Access {
             block_number: self.block_number,
             timestamp: self.timestamp,
@@ -152,8 +125,7 @@ impl ChecksumArgs {
         }
     }
 
-    pub fn checksum(&self) -> FixedBytes<32> {
-        println!("calculating checksum");
+    fn checksum(&self) -> FixedBytes<32> {
         let mut id_packed = Vec::with_capacity(32); // 12 zero bytes + u64 + u64 + u32
         id_packed.extend_from_slice(&[0u8; 12]);
         id_packed.extend_from_slice(&self.block_number.to_be_bytes());
@@ -167,7 +139,7 @@ impl ChecksumArgs {
     }
 }
 
-pub fn encode_access_list(accesses: &[Access]) -> Vec<FixedBytes<32>> {
+fn encode_access_list(accesses: &[Access]) -> Vec<FixedBytes<32>> {
     let mut out = Vec::with_capacity(accesses.len() * 2);
     for acc in accesses {
         out.push(acc.lookup_entry());

@@ -1,6 +1,6 @@
 use crate::{
-    admin_api::{AdminAPI, IdentifierWithPayload, relayMessageCall},
-    contracts::L2_TO_L2_CROSS_DOMAIN_MESSENGER,
+    admin_api::{IdentifierWithPayload, get_access_list_for_identifier},
+    contracts::{L2_TO_L2_CROSS_DOMAIN_MESSENGER, relayMessageCall},
 };
 use contender_core::alloy::{
     hex::FromHex,
@@ -28,7 +28,7 @@ pub async fn relay_message(
 
     let id_req =
         IdentifierWithPayload::new(log, source_timestamp, source_chain_id, payload.to_owned());
-    let access_list = AdminAPI::get_access_list_for_identifier(&id_req).await?;
+    let access_list = get_access_list_for_identifier(&id_req).await?;
 
     let calldata = relayMessageCall {
         _id: id_req.to_sol(),
