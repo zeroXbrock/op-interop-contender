@@ -1,3 +1,4 @@
+mod admin_api;
 mod args;
 mod contracts;
 mod file_seed;
@@ -50,7 +51,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sender,
         source_url,
         destination_url,
-        supersim_admin_url,
         txs_per_batch,
         duration,
         make_report,
@@ -134,8 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         PrometheusCollector::default(),
     )
     .await?;
-    let callback =
-        OpInteropCallback::new(&source_url, &destination_url, &supersim_admin_url, None).await;
+    let callback = OpInteropCallback::new(&source_url, &destination_url, None).await;
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

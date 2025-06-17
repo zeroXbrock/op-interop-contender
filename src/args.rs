@@ -6,8 +6,6 @@ pub struct SpamArgs {
     pub sender: PrivateKeySigner,
     pub source_url: Url,
     pub destination_url: Url,
-    /// TODO: remove this; calculate access list locally
-    pub supersim_admin_url: Url,
     pub txs_per_batch: u64,
     pub duration: u64,
     pub make_report: bool,
@@ -33,12 +31,6 @@ impl SpamArgs {
         ))
         .expect("Invalid destination URL format");
 
-        let supersim_admin_url = Url::from_str(&read_var(
-            "OP_ADMIN_URL",
-            "http://localhost:8420".to_string(),
-        ))
-        .expect("Invalid Supersim admin URL format");
-
         let txs_per_batch = read_var("SPAM_TXS_PER_BATCH", 25);
         let duration = read_var("SPAM_DURATION", 5);
         let make_report = read_var("SPAM_MAKE_REPORT", false);
@@ -47,7 +39,6 @@ impl SpamArgs {
             sender,
             source_url,
             destination_url,
-            supersim_admin_url,
             txs_per_batch,
             duration,
             make_report,
