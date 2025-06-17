@@ -12,10 +12,8 @@ use contender_core::{
         consensus::TxType,
         network::AnyNetwork,
         node_bindings::WEI_IN_ETHER,
-        primitives::{Bytes, U256, utils::format_ether},
+        primitives::{Bytes, utils::format_ether},
         providers::{DynProvider, Provider, ProviderBuilder},
-        rpc::types::TransactionRequest,
-        signers::local::PrivateKeySigner,
     },
     db::{DbOps, SpamDuration, SpamRunRequest},
     spammer::{Spammer, TimedSpammer, tx_actor::TxActorHandle},
@@ -81,6 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         agents.add_new_agent(name, count, &seedfile);
     }
 
+    let destination_chain_id = dest_client.get_chain_id().await?;
     let dest_tx_actor = Arc::new(TxActorHandle::new(120, db.clone(), dest_client.clone()));
     let msg_handles = HashMap::from_iter([(OP_ACTOR_NAME.to_owned(), dest_tx_actor)]);
 
@@ -124,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let config = bulletin_board::get_config(bulletin_addrs[0], 902);
+    let config = bulletin_board::get_config(bulletin_addrs[0], destination_chain_id);
 
     let mut scenario = TestScenario::new(
         config,
