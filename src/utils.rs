@@ -1,6 +1,7 @@
 use crate::{contracts::bytecode, utils::Create2Factory::deployCall};
 use contender_core::{
     alloy::{
+        consensus::{EthereumTxEnvelope, TxEip4844Variant},
         network::{AnyTxEnvelope, EthereumWallet, ReceiptResponse, TransactionBuilder},
         node_bindings::WEI_IN_ETHER,
         primitives::{Address, Bytes, FixedBytes, TxKind, U256, utils::format_ether},
@@ -35,8 +36,7 @@ pub async fn deploy_create2_factory(
         ),
         ..Default::default()
     };
-    let tx = prepare_tx_request(tx, provider, sender).await?;
-    let signed_tx = tx.build(&EthereumWallet::new(sender.to_owned())).await?;
+    let signed_tx = prepare_tx_request(tx, provider, sender).await?;
 
     let tx_hash = provider
         .send_tx_envelope(AnyTxEnvelope::Ethereum(signed_tx))
@@ -70,11 +70,8 @@ pub async fn deploy_create2_contract(
         ),
         ..Default::default()
     };
-    let tx = prepare_tx_request(tx, provider, sender).await?;
-
-    // sign tx
-    let signer = EthereumWallet::new(sender.to_owned());
-    let signed_tx = tx.build(&signer).await?;
+    // fill in missing fields & sign the transaction
+    let signed_tx = prepare_tx_request(tx, provider, sender).await?;
 
     // send tx
     let tx_hash = provider
@@ -103,11 +100,13 @@ pub async fn deploy_create2_contract(
     Err("Deployment failed or no Deployed event found".into())
 }
 
+/// Prepares a transaction request with the necessary fields filled in, such as gas price, nonce, & gas limit,
+/// then builds the transaction using the provided sender's wallet.
 async fn prepare_tx_request(
     tx: TransactionRequest,
     provider: &AnyProvider,
     sender: &PrivateKeySigner,
-) -> Result<TransactionRequest, Box<dyn std::error::Error>> {
+) -> Result<EthereumTxEnvelope<TxEip4844Variant>, Box<dyn std::error::Error>> {
     let gas_price = provider.get_gas_price().await?;
     let nonce = provider.get_transaction_count(sender.address()).await?;
     let tx = tx
@@ -116,8 +115,12 @@ async fn prepare_tx_request(
         .with_nonce(nonce)
         .with_chain_id(provider.get_chain_id().await?);
     let gas_estimate = provider.estimate_gas(tx.to_owned().into()).await?;
+    let tx = tx.with_gas_limit(gas_estimate);
 
-    Ok(tx.with_gas_limit(gas_estimate))
+    // Build the transaction with the sender's wallet
+    let wallet = EthereumWallet::new(sender.to_owned());
+    let res = tx.build(&wallet).await?;
+    Ok(res)
 }
 
 /// Sends funds to a fresh account on each client, then returns the funded signer.
