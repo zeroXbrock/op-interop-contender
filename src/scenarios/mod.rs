@@ -1,1 +1,1 @@
-// pub mod spam_me;
+pub mod bulletin_board;

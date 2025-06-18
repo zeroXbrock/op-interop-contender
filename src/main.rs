@@ -1,8 +1,11 @@
+mod admin_api;
+mod args;
 mod contracts;
 mod file_seed;
 mod op_relay;
 mod scenarios;
 mod spam_callback;
+mod utils;
 
 use contender_core::{
     agent_controller::AgentStore,
@@ -10,24 +13,26 @@ use contender_core::{
         consensus::TxType,
         network::AnyNetwork,
         node_bindings::WEI_IN_ETHER,
-        primitives::{U256, utils::format_ether},
         providers::{DynProvider, Provider, ProviderBuilder},
-        signers::local::PrivateKeySigner,
-        transports::http::reqwest::Url,
     },
     db::{DbOps, SpamDuration, SpamRunRequest},
     spammer::{Spammer, TimedSpammer, tx_actor::TxActorHandle},
     test_scenario::{PrometheusCollector, TestScenario, TestScenarioParams},
 };
 use contender_sqlite::SqliteDb;
-use contender_testfile::TestConfig;
 use file_seed::Seedfile;
 use spam_callback::OpInteropCallback;
-use std::{collections::HashMap, ops::Deref, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, ops::Deref, sync::Arc, time::Duration};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
-use crate::spam_callback::OP_ACTOR_NAME;
+use crate::{
+    args::SpamArgs,
+    contracts::bytecode,
+    scenarios::bulletin_board,
+    spam_callback::OP_ACTOR_NAME,
+    utils::{deploy_contract, deploy_create2_contract, get_fresh_sender},
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -41,33 +46,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // ignore; db won't be affected if tables already exist
     });
     let seedfile = Seedfile::new();
-    let sender = PrivateKeySigner::from_str(&read_var(
-        "SPAM_SENDER_PRIVATE_KEY",
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_owned(),
-    ))
-    .unwrap();
-    let source_url = Url::from_str(&read_var(
-        "SPAM_ORIGIN_RPC",
-        "http://localhost:9545".to_string(),
-    ))
-    .unwrap();
-    let destination_url = Url::from_str(&read_var(
-        "SPAM_DEST_RPC",
-        "http://localhost:9546".to_string(),
-    ))
-    .unwrap();
-    let supersim_admin_url = Url::from_str(&read_var(
-        "OP_ADMIN_URL",
-        "http://localhost:8420".to_string(),
-    ))
-    .unwrap();
-    let txs_per_batch = read_var("SPAM_TXS_PER_BATCH", 25);
-    let duration = read_var("SPAM_DURATION", 5);
-    let scenario_file = read_var(
-        "SPAM_SCENARIO_FILE",
-        "scenario_files/l2MintAndSend.toml".to_string(),
-    );
-    let make_report = read_var("SPAM_MAKE_REPORT", false);
+
+    let SpamArgs {
+        sender,
+        source_url,
+        destination_url,
+        txs_per_batch,
+        duration,
+        make_report,
+    } = args::SpamArgs::from_env();
+
+    let source_client = Arc::new(DynProvider::new(
+        ProviderBuilder::new()
+            .network::<AnyNetwork>()
+            .wallet(sender.to_owned())
+            .connect_http(source_url.to_owned()),
+    ));
+    let dest_client = Arc::new(DynProvider::new(
+        ProviderBuilder::new()
+            .network::<AnyNetwork>()
+            .wallet(sender.to_owned())
+            .connect_http(destination_url.to_owned()),
+    ));
 
     let interval = Duration::from_millis(500);
     let spammer = TimedSpammer::new(interval);
@@ -78,17 +78,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         agents.add_new_agent(name, count, &seedfile);
     }
 
-    let source_client = DynProvider::new(
-        ProviderBuilder::new()
-            .network::<AnyNetwork>()
-            .connect_http(source_url.to_owned()),
-    );
-    let dest_client = DynProvider::new(
-        ProviderBuilder::new()
-            .network::<AnyNetwork>()
-            .connect_http(destination_url.to_owned()),
-    );
-    let dest_tx_actor = Arc::new(TxActorHandle::new(120, db.clone(), Arc::new(dest_client)));
+    let destination_chain_id = dest_client.get_chain_id().await?;
+    let dest_tx_actor = Arc::new(TxActorHandle::new(120, db.clone(), dest_client.clone()));
     let msg_handles = HashMap::from_iter([(OP_ACTOR_NAME.to_owned(), dest_tx_actor)]);
 
     let scenario_params = TestScenarioParams {
@@ -102,7 +93,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         extra_msg_handles: Some(msg_handles),
     };
 
-    let config = TestConfig::from_file(&scenario_file).unwrap();
+    // fund special signer on each client (for CREATE2 factory deployment)
+    let admin_signer =
+        get_fresh_sender(&[source_client.as_ref(), dest_client.as_ref()], &sender).await?;
+
+    // deploy create2 factory & bulletin board contract on both chains
+    let mut bulletin_addrs = vec![];
+    for (idx, client) in [&source_client, &dest_client].iter().enumerate() {
+        let factory_address =
+            deploy_contract(bytecode::CREATE2_FACTORY.to_owned(), &client, &admin_signer).await?;
+        info!("Deployed Create2 factory at: {}", factory_address);
+
+        let salt = [1u8; 32]; // use a fixed salt for simplicity
+        let bulletin_address = deploy_create2_contract(
+            factory_address,
+            salt.into(),
+            bytecode::BULLETIN_BOARD.to_owned(),
+            &client,
+            &admin_signer,
+        )
+        .await?;
+        bulletin_addrs.push(bulletin_address);
+        info!("Deployed bulletin board contract on client {idx} at: {bulletin_address}");
+    }
+    if !bulletin_addrs.iter().all(|&addr| addr == bulletin_addrs[0]) {
+        return Err(
+            "Bulletin board contracts on source and destination chains must have the same address."
+                .into(),
+        );
+    }
+
+    let config = bulletin_board::get_config(bulletin_addrs[0], destination_chain_id);
 
     let mut scenario = TestScenario::new(
         config,
@@ -113,33 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         PrometheusCollector::default(),
     )
     .await?;
-    let callback =
-        OpInteropCallback::new(&source_url, &destination_url, &supersim_admin_url, None).await;
-
-    for (agent_name, _) in agent_defs {
-        if let Some(agent) = agents.get_agent(agent_name) {
-            // check balance of this test signer. if low, fund accounts
-            let test_signer = &agent.signers[0];
-            let balance = source_client.get_balance(test_signer.address()).await?;
-            if balance < WEI_IN_ETHER / U256::from(10) {
-                let pending_txs = scenario
-                    .fund_agent_signers(agent_name, &sender.to_owned().into(), WEI_IN_ETHER)
-                    .await?;
-                for tx in &pending_txs {
-                    // wait for the tx to be mined
-                    let mined_hash = source_client
-                        .watch_pending_transaction(tx.to_owned())
-                        .await?
-                        .await?;
-                    info!(
-                        "Funded {} with {} eth ({mined_hash})",
-                        test_signer.address(),
-                        format_ether(WEI_IN_ETHER)
-                    );
-                }
-            }
-        }
-    }
+    let callback = OpInteropCallback::new(&source_url, &destination_url, None).await;
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -148,12 +143,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_id = db.insert_run(&SpamRunRequest {
         timestamp: timestamp as usize,
         tx_count: (txs_per_batch * duration) as usize,
-        scenario_name: "OP Interop Mint and Relay".to_string(),
+        scenario_name: "OP Interop Message-Passing".to_string(),
         rpc_url: destination_url.to_string(),
         txs_per_duration: txs_per_batch,
         duration: SpamDuration::Seconds((duration * interval.as_millis() as u64) / 1000),
         timeout: 5,
     })?;
+
+    // fund agent signers if needed on source client
+    for (agent_name, _) in agent_defs {
+        if let Some(agent) = agents.get_agent(agent_name) {
+            // check balance of this test signer. if low, fund accounts
+            let test_signer = &agent.signers[0];
+            let balance = source_client.get_balance(test_signer.address()).await?;
+            if balance < WEI_IN_ETHER {
+                agent
+                    .fund_signers(&sender, WEI_IN_ETHER, source_client.clone())
+                    .await?;
+            }
+        }
+    }
 
     spammer
         .spam_rpc(
@@ -189,14 +198,4 @@ fn init_tracing() {
         .with_target(true)
         .with_line_number(true)
         .init();
-}
-
-fn read_var<T: FromStr + std::fmt::Display + Clone>(varname: &str, default: T) -> T {
-    std::env::var(varname)
-        .ok()
-        .and_then(|v| v.parse::<T>().ok())
-        .unwrap_or_else(|| {
-            warn!("{varname} not set, defaulting to {default}");
-            default.clone()
-        })
 }
