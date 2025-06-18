@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-contender_core = { git = "https://github.com/flashbots/contender", branch = "feat/agent-api" }
-contender_report = { git = "https://github.com/flashbots/contender", branch = "feat/agent-api" }
-contender_sqlite = { git = "https://github.com/flashbots/contender", branch = "feat/agent-api" }
-contender_testfile = { git = "https://github.com/flashbots/contender", branch = "feat/agent-api" }
+contender_core = { git = "https://github.com/flashbots/contender", version = "0.2.2" }
+contender_report = { git = "https://github.com/flashbots/contender", version = "0.2.2" }
+contender_sqlite = { git = "https://github.com/flashbots/contender", version = "0.2.2" }
+contender_testfile = { git = "https://github.com/flashbots/contender", version = "0.2.2" }
 # contender_core.path = "../contender/crates/core"
 # contender_report.path = "../contender/crates/report"
 # contender_sqlite.path = "../contender/crates/sqlite_db"
