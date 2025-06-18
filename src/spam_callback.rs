@@ -1,4 +1,4 @@
-use crate::op_relay::{SupersimAdminProvider, find_xchain_log, relay_message};
+use crate::op_relay::{find_xchain_log, relay_message};
 use contender_core::alloy::{
     network::EthereumWallet,
     primitives::TxHash,
@@ -25,7 +25,6 @@ pub static OP_ACTOR_NAME: &str = "op-dest";
 pub struct OpInteropCallback {
     destination_provider: Arc<AnyProvider>,
     source_provider: Arc<AnyProvider>,
-    op_admin_provider: Arc<SupersimAdminProvider>,
     source_chain_id: u64,
 }
 
@@ -33,7 +32,6 @@ impl OpInteropCallback {
     pub async fn new(
         source_rpc_url: &Url,
         destination_rpc_url: &Url,
-        admin_url: &Url,
         admin_signer: Option<&PrivateKeySigner>,
     ) -> Self {
         let source_provider = DynProvider::new(
@@ -45,26 +43,24 @@ impl OpInteropCallback {
             .get_chain_id()
             .await
             .expect("Failed to get source chain ID");
-        let destination_wallet = if let Some(signer) = admin_signer {
-            EthereumWallet::from(signer.to_owned())
-        } else {
-            PrivateKeySigner::from_str(
-                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        let destination_wallet: EthereumWallet = admin_signer
+            .unwrap_or(
+                &PrivateKeySigner::from_str(
+                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+                )
+                .unwrap(),
             )
-            .unwrap()
-            .into()
-        };
+            .to_owned()
+            .into();
         let destination_provider = DynProvider::new(
             ProviderBuilder::new()
                 .network::<AnyNetwork>()
                 .wallet(destination_wallet)
                 .connect_http(destination_rpc_url.to_owned()),
         );
-        let op_admin_provider = SupersimAdminProvider::new(admin_url.to_owned());
         Self {
             destination_provider: Arc::new(destination_provider),
             source_provider: Arc::new(source_provider),
-            op_admin_provider: Arc::new(op_admin_provider),
             source_chain_id,
         }
     }
@@ -86,7 +82,6 @@ impl OnTxSent for OpInteropCallback {
     ) -> Option<tokio_task::JoinHandle<()>> {
         let dest_provider = self.destination_provider.clone();
         let source_provider = self.source_provider.clone();
-        let op_admin_provider = self.op_admin_provider.clone();
         let source_chain_id = self.source_chain_id;
         let source_tx_hash = pending_tx.tx_hash().to_owned();
 
@@ -96,7 +91,6 @@ impl OnTxSent for OpInteropCallback {
                 source_tx_hash,
                 source_chain_id,
                 &dest_provider,
-                &op_admin_provider,
             )
             .await
             .map_err(|e| format!("Failed to handle on_tx_sent: {e}"))
@@ -133,7 +127,6 @@ pub async fn handle_on_tx_sent(
     tx_hash: TxHash,
     source_chain_id: u64,
     destination_provider: &AnyProvider,
-    op_admin_provider: &SupersimAdminProvider,
 ) -> Result<Option<TxHash>, Box<dyn std::error::Error>> {
     // wait for tx to land
     let _ = source_provider
@@ -161,7 +154,6 @@ pub async fn handle_on_tx_sent(
             block.header.timestamp,
             source_chain_id,
             destination_provider,
-            op_admin_provider,
         )
         .await?;
         relay_tx_hash = res.map(|tx| tx.tx_hash().to_owned());
