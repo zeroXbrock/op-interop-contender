@@ -1975,6 +1975,7 @@ checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 [[package]]
 name = "contender_bundle_provider"
 version = "0.2.2"
+source = "git+https://github.com/flashbots/contender?branch=bugfix%2Ferror-handling#61c126d5dfd9beadc82feb30cb51dab1389679ef"
 dependencies = [
  "alloy",
  "serde",
@@ -1984,6 +1985,7 @@ dependencies = [
 [[package]]
 name = "contender_core"
 version = "0.2.2"
+source = "git+https://github.com/flashbots/contender?branch=bugfix%2Ferror-handling#61c126d5dfd9beadc82feb30cb51dab1389679ef"
 dependencies = [
  "alloy",
  "async-trait",
@@ -2005,6 +2007,7 @@ dependencies = [
 [[package]]
 name = "contender_engine_provider"
 version = "0.2.2"
+source = "git+https://github.com/flashbots/contender?branch=bugfix%2Ferror-handling#61c126d5dfd9beadc82feb30cb51dab1389679ef"
 dependencies = [
  "alloy",
  "alloy-json-rpc",
@@ -2029,6 +2032,7 @@ dependencies = [
 [[package]]
 name = "contender_report"
 version = "0.2.2"
+source = "git+https://github.com/flashbots/contender?branch=bugfix%2Ferror-handling#61c126d5dfd9beadc82feb30cb51dab1389679ef"
 dependencies = [
  "alloy",
  "chrono",
@@ -2047,6 +2051,7 @@ dependencies = [
 [[package]]
 name = "contender_sqlite"
 version = "0.2.2"
+source = "git+https://github.com/flashbots/contender?branch=bugfix%2Ferror-handling#61c126d5dfd9beadc82feb30cb51dab1389679ef"
 dependencies = [
  "alloy",
  "contender_core",
@@ -2059,6 +2064,7 @@ dependencies = [
 [[package]]
 name = "contender_testfile"
 version = "0.2.2"
+source = "git+https://github.com/flashbots/contender?branch=bugfix%2Ferror-handling#61c126d5dfd9beadc82feb30cb51dab1389679ef"
 dependencies = [
  "alloy",
  "contender_core",
