@@ -45,5 +45,3 @@ cargo run
 By default, the program runs a [builtin scenario](./src/scenarios/l2MintAndSend.toml) on a timed spammer, which mints tokens on [chain A](http://localhost:9545) and transfers them to [chain B](http://localhost:9546)
 
 [spam_callback.rs](./src/spam_callback.rs) defines a custom callback which holds a JSON-RPC provider connected to the destination chain. This allows us to watch transactions after we relay them, and record information about them in the DB.
-
-We also have a [custom provider](./src/op_relay.rs#L82) to interact with the supersim admin API, which is used to call `admin_getAccessListForIdentifier`, which is just a convenience API method. This call could potentially be replaced with an in-memory algorithm, so we could test environments that don't expose that method.

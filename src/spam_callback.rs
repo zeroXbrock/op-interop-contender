@@ -1,24 +1,27 @@
 use crate::op_relay::{find_xchain_log, relay_message};
-use contender_core::alloy::{
-    network::EthereumWallet,
-    primitives::TxHash,
-    providers::{
-        DynProvider, PendingTransactionConfig, Provider, ProviderBuilder, network::AnyNetwork,
-    },
-    signers::local::PrivateKeySigner,
-    transports::http::reqwest::Url,
-};
 use contender_core::spammer::RuntimeTxInfo;
 use contender_core::spammer::tx_actor::CacheTx;
+use contender_core::{
+    alloy::{
+        network::EthereumWallet,
+        primitives::TxHash,
+        providers::{
+            DynProvider, PendingTransactionConfig, Provider, ProviderBuilder, network::AnyNetwork,
+        },
+        signers::local::PrivateKeySigner,
+        transports::http::reqwest::Url,
+    },
+    error::ContenderError,
+};
 use contender_core::{
     generator::{NamedTxRequest, types::AnyProvider},
     spammer::{OnBatchSent, OnTxSent, tx_actor::TxActorHandle},
     tokio_task::{self},
 };
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use tracing::{info, warn};
+use std::{collections::HashMap, ops::Deref};
+use tracing::info;
 
 pub static OP_ACTOR_NAME: &str = "op-dest";
 
@@ -67,7 +70,7 @@ impl OpInteropCallback {
 }
 
 impl OnBatchSent for OpInteropCallback {
-    fn on_batch_sent(&self) -> Option<tokio_task::JoinHandle<Result<(), String>>> {
+    fn on_batch_sent(&self) -> Option<tokio_task::JoinHandle<Result<(), ContenderError>>> {
         None
     }
 }
@@ -79,7 +82,7 @@ impl OnTxSent for OpInteropCallback {
         _tx_req: &NamedTxRequest,
         extra: RuntimeTxInfo,
         tx_actors: Option<HashMap<String, Arc<TxActorHandle>>>,
-    ) -> Option<tokio_task::JoinHandle<()>> {
+    ) -> Option<tokio_task::JoinHandle<Result<(), ContenderError>>> {
         let dest_provider = self.destination_provider.clone();
         let source_provider = self.source_provider.clone();
         let source_chain_id = self.source_chain_id;
@@ -93,11 +96,7 @@ impl OnTxSent for OpInteropCallback {
                 &dest_provider,
             )
             .await
-            .map_err(|e| format!("Failed to handle on_tx_sent: {e}"))
-            .unwrap_or_else(|e| {
-                warn!("Error: {e}");
-                None
-            });
+            .map_err(|e| ContenderError::with_err(e.deref(), "failed to handle on_tx_sent"))?;
             if let Some(relay_tx_hash) = relay_tx_hash {
                 info!("Message {source_tx_hash} relayed by tx {relay_tx_hash}");
                 let tx = CacheTx {
@@ -109,11 +108,12 @@ impl OnTxSent for OpInteropCallback {
                 if let Some(Some(actor)) =
                     tx_actors.map(|actors| actors.get(OP_ACTOR_NAME).cloned())
                 {
-                    actor.cache_run_tx(tx).await.unwrap_or_else(|e| {
-                        warn!("Failed to cache transaction: {e}");
-                    });
+                    actor.cache_run_tx(tx).await.map_err(|e| {
+                        ContenderError::with_err(e.deref(), "failed to cache run tx")
+                    })?;
                 }
             }
+            Ok(())
         });
 
         Some(handle)
