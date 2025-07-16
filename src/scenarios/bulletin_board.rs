@@ -17,7 +17,7 @@ pub fn get_config(bulletin_board: Address, destination_chainid: u64) -> TestConf
             to: bulletin_board.to_string(),
             from: None,
             from_pool: Some("spammers".into()),
-            signature: "postBulletin(uint256 toChainId, bytes calldata data)".into(),
+            signature: Some("postBulletin(uint256 toChainId, bytes calldata data)".to_string()),
             args: Some(vec![destination_chainid.to_string(), "howdy".encode_hex()]),
             gas_limit: None,
             value: None,

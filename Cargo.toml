@@ -4,19 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# contender_core = { git = "https://github.com/flashbots/contender", version = "0.2.2" }
-# contender_report = { git = "https://github.com/flashbots/contender", version = "0.2.2" }
-# contender_sqlite = { git = "https://github.com/flashbots/contender", version = "0.2.2" }
-# contender_testfile = { git = "https://github.com/flashbots/contender", version = "0.2.2" }
-# contender_core.path = "../contender/crates/core"
-# contender_report.path = "../contender/crates/report"
-# contender_sqlite.path = "../contender/crates/sqlite_db"
-# contender_testfile.path = "../contender/crates/testfile"
-contender_core = { git = "https://github.com/flashbots/contender", branch = "bugfix/tolerate-missing-traces" }
-contender_report = { git = "https://github.com/flashbots/contender", branch = "bugfix/tolerate-missing-traces" }
-contender_sqlite = { git = "https://github.com/flashbots/contender", branch = "bugfix/tolerate-missing-traces" }
-contender_testfile = { git = "https://github.com/flashbots/contender", branch = "bugfix/tolerate-missing-traces" }
-
+contender_core = { git = "https://github.com/flashbots/contender", version = "0.3.0" }
+contender_report = { git = "https://github.com/flashbots/contender", version = "0.3.0" }
+contender_sqlite = { git = "https://github.com/flashbots/contender", version = "0.3.0" }
+contender_testfile = { git = "https://github.com/flashbots/contender", version = "0.3.0" }
 
 serde = { version = "1.0.219", features = ["derive"] }
 tokio = { version = "1.40.0", features = ['rt-multi-thread'] }
