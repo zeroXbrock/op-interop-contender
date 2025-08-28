@@ -62,12 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .connect_http(destination_url.to_owned()),
     ));
     let destination_chain_id = dest_client.get_chain_id().await?;
-
-    // how often we send txs
-    let interval = Duration::from_millis(500);
-
     let bulletin_addrs = deploy_bulletin_contracts(&sender, &source_url, &destination_url).await?;
-
     let config = bulletin_board::get_config(bulletin_addrs[0], destination_chain_id);
     let agents = config.build_agent_store(&seedfile, AgentSpec::default());
     let dest_tx_actor = Arc::new(TxActorHandle::new(120, db.clone(), dest_client.clone()));
@@ -83,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scenario = ctx.build_scenario().await?;
 
     let mut contender = Contender::new(ctx);
-    let spammer = TimedSpammer::new(interval);
+    let spammer = TimedSpammer::new(Duration::from_millis(500));
     let callback = OpInteropCallback::new(&source_url, &destination_url, None).await;
 
     contender
