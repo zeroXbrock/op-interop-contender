@@ -8,16 +8,17 @@ mod spam_callback;
 mod utils;
 
 use contender_core::{
-    agent_controller::AgentStore,
+    Contender, ContenderCtx, RunOpts,
     alloy::{
-        consensus::TxType,
         network::AnyNetwork,
         node_bindings::WEI_IN_ETHER,
+        primitives::Address,
         providers::{DynProvider, Provider, ProviderBuilder},
+        signers::local::PrivateKeySigner,
     },
-    db::{DbOps, SpamDuration, SpamRunRequest},
-    spammer::{Spammer, TimedSpammer, tx_actor::TxActorHandle},
-    test_scenario::{PrometheusCollector, TestScenario, TestScenarioParams},
+    generator::agent_pools::{AgentPools, AgentSpec},
+    spammer::{TimedSpammer, tx_actor::TxActorHandle},
+    test_scenario::Url,
 };
 use contender_sqlite::SqliteDb;
 use file_seed::Seedfile;
@@ -42,11 +43,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     let db = Arc::new(SqliteDb::from_file(".contender/contender.db").expect("failed to open db"));
-    db.create_tables().unwrap_or_else(|_| {
-        // ignore; db won't be affected if tables already exist
-    });
     let seedfile = Seedfile::new();
 
+    // load user-specified options (env vars)
     let SpamArgs {
         sender,
         source_url,
@@ -56,6 +55,80 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         make_report,
     } = args::SpamArgs::from_env();
 
+    let dest_client = Arc::new(DynProvider::new(
+        ProviderBuilder::new()
+            .network::<AnyNetwork>()
+            .wallet(sender.to_owned())
+            .connect_http(destination_url.to_owned()),
+    ));
+    let destination_chain_id = dest_client.get_chain_id().await?;
+
+    // how often we send txs
+    let interval = Duration::from_millis(500);
+
+    let bulletin_addrs = deploy_bulletin_contracts(&sender, &source_url, &destination_url).await?;
+
+    let config = bulletin_board::get_config(bulletin_addrs[0], destination_chain_id);
+    let agents = config.build_agent_store(&seedfile, AgentSpec::default());
+    let dest_tx_actor = Arc::new(TxActorHandle::new(120, db.clone(), dest_client.clone()));
+    let msg_handles = HashMap::from_iter([(OP_ACTOR_NAME.to_owned(), dest_tx_actor)]);
+
+    let ctx = ContenderCtx::builder(config, db.deref().to_owned(), seedfile, source_url.as_str())
+        .agent_store(agents)
+        .funding(WEI_IN_ETHER)
+        .user_signers(vec![sender.to_owned()])
+        .pending_tx_timeout_secs(10)
+        .extra_msg_handles(msg_handles)
+        .build();
+    let scenario = ctx.build_scenario().await?;
+
+    let mut contender = Contender::new(ctx);
+    let spammer = TimedSpammer::new(interval);
+    let callback = OpInteropCallback::new(&source_url, &destination_url, None).await;
+
+    contender
+        .spam(
+            spammer,
+            callback.into(),
+            RunOpts::new()
+                .txs_per_period(txs_per_batch)
+                .periods(duration)
+                .name("OP Interop Message-Passing"),
+        )
+        .await?;
+
+    if make_report {
+        info!("Generating report...");
+        let data_dir = std::fs::canonicalize(".contender")?;
+        info!("Contender directory: {}", data_dir.display());
+        contender_report::command::report(
+            None,
+            0,
+            scenario.db.as_ref(),
+            data_dir.to_str().expect("invalid data dir"),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")); // fallback if RUST_LOG is unset
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_line_number(true)
+        .init();
+}
+
+async fn deploy_bulletin_contracts(
+    sender: &PrivateKeySigner,
+    source_url: &Url,
+    dest_url: &Url,
+) -> Result<Vec<Address>, Box<dyn std::error::Error>> {
+    let mut bulletin_addrs = vec![];
     let source_client = Arc::new(DynProvider::new(
         ProviderBuilder::new()
             .network::<AnyNetwork>()
@@ -66,39 +139,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ProviderBuilder::new()
             .network::<AnyNetwork>()
             .wallet(sender.to_owned())
-            .connect_http(destination_url.to_owned()),
+            .connect_http(dest_url.to_owned()),
     ));
-
-    let interval = Duration::from_millis(500);
-    let spammer = TimedSpammer::new(interval);
-
-    let mut agents = AgentStore::new();
-    let agent_defs = [("admin", 1), ("spammers", 10)];
-    for (name, count) in agent_defs {
-        agents.add_new_agent(name, count, &seedfile);
-    }
-
-    let destination_chain_id = dest_client.get_chain_id().await?;
-    let dest_tx_actor = Arc::new(TxActorHandle::new(120, db.clone(), dest_client.clone()));
-    let msg_handles = HashMap::from_iter([(OP_ACTOR_NAME.to_owned(), dest_tx_actor)]);
-
-    let scenario_params = TestScenarioParams {
-        rpc_url: source_url.to_owned(),
-        builder_rpc_url: None,
-        signers: vec![sender.to_owned()],
-        agent_store: agents.to_owned(),
-        tx_type: TxType::Eip1559,
-        pending_tx_timeout_secs: 10,
-        bundle_type: Default::default(),
-        extra_msg_handles: Some(msg_handles),
-    };
 
     // fund special signer on each client (for CREATE2 factory deployment)
     let admin_signer =
         get_fresh_sender(&[source_client.as_ref(), dest_client.as_ref()], &sender).await?;
-
-    // deploy create2 factory & bulletin board contract on both chains
-    let mut bulletin_addrs = vec![];
     for (idx, client) in [&source_client, &dest_client].iter().enumerate() {
         let factory_address =
             deploy_contract(bytecode::CREATE2_FACTORY.to_owned(), &client, &admin_signer).await?;
@@ -123,79 +169,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let config = bulletin_board::get_config(bulletin_addrs[0], destination_chain_id);
-
-    let mut scenario = TestScenario::new(
-        config,
-        db.clone(),
-        seedfile,
-        scenario_params,
-        None,
-        PrometheusCollector::default(),
-    )
-    .await?;
-    let callback = OpInteropCallback::new(&source_url, &destination_url, None).await;
-
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_millis();
-    let run_id = db.insert_run(&SpamRunRequest {
-        timestamp: timestamp as usize,
-        tx_count: (txs_per_batch * duration) as usize,
-        scenario_name: "OP Interop Message-Passing".to_string(),
-        rpc_url: destination_url.to_string(),
-        txs_per_duration: txs_per_batch,
-        duration: SpamDuration::Seconds((duration * interval.as_millis() as u64) / 1000),
-        timeout: 5,
-    })?;
-
-    // fund agent signers if needed on source client
-    for (agent_name, _) in agent_defs {
-        if let Some(agent) = agents.get_agent(agent_name) {
-            // check balance of this test signer. if low, fund accounts
-            let test_signer = &agent.signers[0];
-            let balance = source_client.get_balance(test_signer.address()).await?;
-            if balance < WEI_IN_ETHER {
-                agent
-                    .fund_signers(&sender, WEI_IN_ETHER, source_client.clone())
-                    .await?;
-            }
-        }
-    }
-
-    spammer
-        .spam_rpc(
-            &mut scenario,
-            txs_per_batch,
-            duration,
-            Some(run_id),
-            Arc::new(callback),
-        )
-        .await?;
-
-    if make_report {
-        info!("Generating report...");
-        let data_dir = std::fs::canonicalize(".contender")?;
-        info!("Contender directory: {}", data_dir.display());
-        contender_report::command::report(
-            Some(run_id),
-            0,
-            db.deref(),
-            data_dir.to_str().expect("invalid data dir"),
-        )
-        .await?;
-    }
-
-    Ok(())
-}
-
-fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")); // fallback if RUST_LOG is unset
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true)
-        .with_line_number(true)
-        .init();
+    Ok(bulletin_addrs)
 }

@@ -13,16 +13,12 @@ pub fn get_config(bulletin_board: Address, destination_chainid: u64) -> TestConf
         // so we have our own deployment code
         create: None,
         setup: None,
-        spam: Some(vec![SpamRequest::Tx(FunctionCallDefinition {
-            to: bulletin_board.to_string(),
-            from: None,
-            from_pool: Some("spammers".into()),
-            signature: Some("postBulletin(uint256 toChainId, bytes calldata data)".to_string()),
-            args: Some(vec![destination_chainid.to_string(), "howdy".encode_hex()]),
-            gas_limit: None,
-            value: None,
-            fuzz: None,
-            kind: None,
-        })]),
+        spam: Some(vec![SpamRequest::Tx(
+            FunctionCallDefinition::new(bulletin_board.to_string())
+                .with_from_pool("spammers")
+                .with_signature("postBulletin(uint256 toChainId, bytes calldata data)")
+                .with_args(&[destination_chainid.to_string(), "howdy".encode_hex()])
+                .into(),
+        )]),
     }
 }
